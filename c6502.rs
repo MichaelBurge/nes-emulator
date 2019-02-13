@@ -1,4 +1,7 @@
-struct cpu {
+use "common.rs";
+
+// Ricoh 2A03, a variation of the 6502
+struct C6502 {
     acc: u8,
     x: u8,
     y: u8,
@@ -44,7 +47,8 @@ enum addressing_mode {
 const STACK_PAGE = 0x0100u16;
 
 type cycle_count = u8;
-type memory = [u8; 65536];
+type memory = AddressSpace;
+type cpu = C6502;
 
 //
 const abs = absolute;
