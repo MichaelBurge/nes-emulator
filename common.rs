@@ -26,3 +26,7 @@ fn mirrored_lea(ptr: u16, (base_low, base_high): (u16, u16), (extended_low, exte
     let width = (base_high - base_low);
     return Some((ptr - extended_low) % width + base_low);
 }
+
+fn get_bit(x: u8, i: u8) {
+    return (x >> i) & 1;
+}

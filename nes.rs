@@ -7,8 +7,8 @@ struct Nes {
     apu: Rp2a02,
     ram: [u8; 2048],
     ppu: Ppu,
-    j1: joystick,
-    j2: joystick,
+    j1: Joystick,
+    j2: Joystick,
     cartridge: [u8;15000],
 }
 
