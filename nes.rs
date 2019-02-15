@@ -55,9 +55,9 @@ fn map_apu_port(ptr: u16) -> Option<ApuPort> {
 }
 
 impl Nes {
-    fn clock() {
-        cpu.clock();
-        for i in 1..3 { ppu.clock(); }
+    fn clock(&mut self) {
+        self.cpu.clock();
+        for i in 1..3 { self.ppu.clock(); }
     }
 }
 

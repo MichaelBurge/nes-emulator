@@ -19,6 +19,7 @@ struct Ppu {
     data_bus: u8,
     ram: [u8; 2048 ],
     oam: [u8; 256],
+    mapper: AddressSpace,
     // Registers
     frame_parity: bool, // Toggled every frame
     control: u8, // PPUCTRL register
@@ -31,8 +32,8 @@ enum PpuPort {
 }
 
 impl AddressSpace for Ppu {
-    fn peek(&self, ptr) { /* TODO */ }
-    fn poke(&self, ptr, v) { /* TODO */ }
+    fn peek(&self, ptr) { return self.mapper.peek(ptr); }
+    fn poke(&self, ptr, v) { self.mapper.poke(ptr, v); }
 }
 
 struct Sprite {

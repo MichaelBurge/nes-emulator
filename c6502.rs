@@ -13,9 +13,10 @@ struct C6502 {
     decimal: bool,
     overflow: bool,
     negative: bool,
+    mapper: AddressSpace,
 }
 
-enum operation {
+enum Operation {
     ADC, AND, ASL, BCC,
     BCS, BEQ, BIT, BMI,
     BNE, BPL, BRK, BVC,
@@ -34,7 +35,7 @@ enum operation {
     KIL,
 }
 
-enum addressing_mode {
+enum AddressingMode {
     immediate,
     zero_page, zero_page_x,
     absolute, absolute_x, absolute_y,
@@ -46,9 +47,7 @@ enum addressing_mode {
 
 const STACK_PAGE = 0x0100u16;
 
-type cycle_count = u8;
-type memory = AddressSpace;
-type cpu = C6502;
+type CycleCount = u8;
 
 //
 const abs = absolute;
@@ -63,7 +62,7 @@ const abx = absolute_x;
 const aby = absolute_y;
 
 // Opcode table: http://www.oxyron.de/html/opcodes02.html
-const opcode_table: [(operation, addressing_mode, cycle_count, cycle_count)] =
+const opcode_table: [(Operation, AddressingMode, CycleCount, CycleCount)] =
     // TODO Audit each record to see that it was input correctly
     // (Operation, addressing mode, clock cycles, extra clock cycles if page boundary crossed)
     [   // 0x
@@ -340,479 +339,481 @@ const opcode_table: [(operation, addressing_mode, cycle_count, cycle_count)] =
         (ISC, abx, 7, 0), // xF
         ];
 
-struct instruction {
-    op: operation,
-    mode: addressing_mode,
+struct Instruction {
+    op: Operation,
+    mode: AddressingMode,
     mode_args: u16,
 }
 
-fn clock(c: &cpu, m: &memory) {
-    let i = decode_instruction(c, m);
-    execute_instruction(c, i, m);
-}
-
-
-fn decode_instruction(c: &cpu, m: &memory) -> instruction {
-    let ptr = c.pc;
-    let opcode = m[ptr];
-    let (op, mode, clocks, page_clocks) = opcode_table[opcode];
-    let mode_args = decode_addressing_mode(mode, ptr+1, m);
-    return instruction(op, mode, mode_args);
-}
-
-fn execute_instruction(c: &cpu, m: &memory) {
-    let v = decode_addressing_mode(i.addressing_mode, c.pc+1, c, m);
-    let write_target = match mode {
-        accumulator => &c.acc,
-        _           => &memory[v],
-    };
-
-    match op {
-        ADC => { execute_adc(v, c) },
-        AND => { execute_and(v, c) },
-        ASL => { execute_asl(v, c) },
-        BCC => { execute_bcc(v, c) },
-        BCS => { execute_bcs(v, c) },
-        BEQ => { execute_beq(v, c) },
-        BIT => { execute_bit(v, c) },
-        BMI => { execute_bmi(v, c) },
-        BNE => { execute_bne(v, c) },
-        BPL => { execute_bpl(v, c) },
-        BRK => { execute_brk(c) },
-        BVC => { execute_bvc(v, c) },
-        CLC => { execute_clc(c) },
-        CLD => { execute_cld(c) },
-        CLI => { execute_cli(c) },
-        CLV => { execute_clv(c) },
-        CMP => { execute_cmp(v, c) },
-        CPX => { execute_cpx(v, c) },
-        CPY => { execute_cpy(v, c) },
-        DEC => { execute_dec(write_target, c) },
-        DEX => { execute_dex(c) },
-        DEY => { execute_dey(c) },
-        EOR => { execute_eor(v, c) },
-        INC => { execute_inc(write_target, c) },
-        INX => { execute_inx(c) },
-        INY => { execute_inx(c) },
-        JMP => { execute_jmp(v, c) },
-        JSR => { execute_jsr(v, c, m) },
-        LDA => { execute_lda(v, c) },
-        LDX => { execute_ldx(v, c) },
-        LDY => { execute_ldy(v, c) },
-        LSR => { execute_lsr(write_target) },
-        NOP => { execute_nop() },
-        ORA => { execute_ora(v, c) },
-        PHA => { execute_pha(c, m) },
-        PHP => { execute_php(c, m) },
-        PLA => { execute_pla(c, m) },
-        PLP => { execute_plp(c, m) },
-        ROL => { execute_rol(write_target, c) },
-        ROR => { execute_ror(write_target, c) },
-        RTI => { execute_rti(c, m) },
-        RTS => { execute_rts(c, m) },
-        SBC => { execute_sbc(c, m) },
-        SEC => { execute_sec(c) },
-        SED => { execute_sed(c) },
-        SEI => { execute_sei(c) },
-        STA => { execute_sta(write_target, c) },
-        STX => { execute_stx(write_target, c) },
-        STY => { execute_sty(write_target, c) },
-        TAX => { execute_tax(c) },
-        TAY => { execute_tay(c) },
-        TSX => { execute_tsx(c) },
-        TXA => { execute_txa(c) },
-        TXS => { execute_txs(c) },
-        TYA => { execute_tya(c) },
-        KIL => { panic!("KIL instruction encountered") },
+impl C6502 {
+    fn clock(&mut self) {
+        let i = self.decode_instruction();
+        self.execute_instruction(i);
     }
-}
 
-fn decode_addressing_mode(mode: addressing_mode, ptr: u16, c: cpu, m: &memory) -> u16 {
-    match mode {
-        immediate   => peek(ptr, m),
-        zero_page   => peek(peek(ptr, m), m),
-        zero_page_x => peek_offset(peek(ptr, m), c.x),
-        absolute    => peek16(ptr),
-        absolute_x  => peek_offset16(ptr, c.x, m),
-        absolute_y  => peek_offset16(ptr, c.y, m),
-        indirect    => peek16(peek16(ptr, m), m),
-        indirect_x  => peek16(peek_offset(ptr, c.x, m), m),
-        indirect_y  => peek16(peek_offset(ptr, c.y, m), m),
-        relative    => peek(ptr, m),
-        accumulator => 0xDEAD,
-        implicit    => 0xDEAD,
+    fn decode_instruction(&self) -> Instruction {
+        let ptr = self.pc;
+        let opcode = self.peek(ptr);
+        let (op, mode, clocks, page_clocks) = opcode_table[opcode];
+        let mode_args = self.decode_addressing_mode(mode, wrapped_add(ptr, 1));
+        return instruction(op, mode, mode_args);
+    }
+
+    fn read_write_target(&self, write_target: Option<u16>) {
+        match write_target {
+            None => self.acc,
+            Some(ptr) => self.peek(ptr),
+        }
+    }
+
+    fn store_write_target(&self, v: u8, write_target: Option<u16>) {
+        match write_target {
+            None => { self.acc = v },
+            Some(ptr) => { self.poke(ptr, v); },
+        }
+    }
+
+    fn execute_instruction(&mut self) {
+        let v = self.decode_addressing_mode(i.addressing_mode, wrapped_add(c.pc, 1));
+        let write_target = match mode {
+            accumulator => None,
+            _           => v,
+        };
+
+        match op {
+            ADC => { self.execute_adc(v) },
+            AND => { self.execute_and(v) },
+            ASL => { self.execute_asl(v) },
+            BCC => { self.execute_bcc(v) },
+            BCS => { self.execute_bcs(v) },
+            BEQ => { self.execute_beq(v) },
+            BIT => { self.execute_bit(v) },
+            BMI => { self.execute_bmi(v) },
+            BNE => { self.execute_bne(v) },
+            BPL => { self.execute_bpl(v) },
+            BRK => { self.execute_brk() },
+            BVC => { self.execute_bvc(v) },
+            CLC => { self.execute_clc() },
+            CLD => { self.execute_cld() },
+            CLI => { self.execute_cli() },
+            CLV => { self.execute_clv() },
+            CMP => { self.execute_cmp(v) },
+            CPX => { self.execute_cpx(v) },
+            CPY => { self.execute_cpy(v) },
+            DEC => { self.store_write_target(self.execute_dec(self.read_write_target(write_target))) },
+            DEX => { self.execute_dex() },
+            DEY => { self.execute_dey() },
+            EOR => { self.execute_eor(v) },
+            INC => { self.store_write_target(self.execute_inc(self.read_write_target(write_target))) },
+            INX => { self.execute_inx() },
+            INY => { self.execute_inx() },
+            JMP => { self.execute_jmp(v) },
+            JSR => { self.execute_jsr(v) },
+            LDA => { self.execute_lda(v) },
+            LDX => { self.execute_ldx(v) },
+            LDY => { self.execute_ldy(v) },
+            LSR => { self.store_write_target(self.execute_lsr(self.read_write_target(write_target))) },
+            NOP => { self.execute_nop() },
+            ORA => { self.execute_ora(v) },
+            PHA => { self.execute_pha() },
+            PHP => { self.execute_php() },
+            PLA => { self.execute_pla() },
+            PLP => { self.execute_plp() },
+            ROL => { self.store_write_target(self.execute_rol(self.read_write_target(write_target))) },
+            ROR => { self.store_write_target(self.execute_ror(self.read_write_target(write_target))) },
+            RTI => { self.execute_rti() },
+            RTS => { self.execute_rts() },
+            SBC => { self.execute_sbc() },
+            SEC => { self.execute_sec() },
+            SED => { self.execute_sed() },
+            SEI => { self.execute_sei() },
+            STA => { self.store_write_target(self.execute_sta(self.read_write_target(write_target))) },
+            STX => { self.store_write_target(self.execute_stx(self.read_write_target(write_target))) },
+            STY => { self.store_write_target(self.execute_sty(self.read_write_target(write_target))) },
+            TAX => { self.execute_tax() },
+            TAY => { self.execute_tay() },
+            TSX => { self.execute_tsx() },
+            TXA => { self.execute_txa() },
+            TXS => { self.execute_txs() },
+            TYA => { self.execute_tya() },
+            KIL => { panic!("KIL instruction encountered") },
+        }
+    }
+
+    fn decode_addressing_mode(&self, mode: addressing_mode, ptr: u16) -> u16 {
+        match mode {
+            immediate   => self.peek(ptr),
+            zero_page   => self.peek(self.peek(ptr)),
+            zero_page_x => self.peek_offset(peek(ptr), c.x),
+            absolute    => self.peek16(ptr),
+            absolute_x  => self.peek_offset16(ptr, c.x),
+            absolute_y  => self.peek_offset16(ptr, c.y),
+            indirect    => self.peek16(self.peek16(ptr)),
+            indirect_x  => self.peek16(self.peek_offset(ptr, c.x)),
+            indirect_y  => self.peek16(self.peek_offset(ptr, c.y)),
+            relative    => self.peek(ptr),
+            accumulator => 0xDEAD,
+            implicit    => 0xDEAD,
+        }
     }
 }
 
 // BEGIN instructions
 
-fn execute_adc(v: u8, c: &cpu) {
-    let (x1, o1) = overflowing_add(v, c.acc);
-    let (x2, o2) = overflowing_add(x1, c.carry as u8);
-    c.carry = o1 | o2;
-    c.acc = x2;
-    update_accumulator_flags(c);
+impl C6502 {
+    fn execute_adc(&self, v: u8) {
+        let (x1, o1) = overflowing_add(v, self.acc);
+        let (x2, o2) = overflowing_add(x1, self.carry as u8);
+        c.carry = o1 | o2;
+        c.acc = x2;
+        self.update_accumulator_flags();
+    }
+
+    fn execute_and(&mut self, v: u8) {
+        self.acc &= v;
+        self.update_accumulator_flags();
+    }
+
+    fn execute_asl(&mut self, v: u8) {
+        let (x, o) = overflowing_shl(v, self.acc);
+        self.carry = o;
+        self.acc = x;
+        self.update_accumulator_flags();
+    }
+
+    fn execute_branch(&mut self, v: u8) {
+        self.pc += (v as i8);
+    }
+
+    fn execute_bcc(&mut self, v: u8) {
+        if !self.carry
+        { self.execute_branch(v); }
+    }
+
+    fn execute_bcs(&mut self, v: u8) {
+        if self.carry
+        { self.execute_branch(v); }
+    }
+
+    fn execute_beq(&mut self, v: u8) {
+        if self.zero
+        { self.execute_branch(v); }
+    }
+
+    fn execute_bit(&mut self, v: u8) {
+        let x = v & self.acc;
+        self.negative = 0b10000000 & x as bool;
+        self.overflow = 0b01000000 & x as bool;
+        self.zero = (x == 0);
+    }
+
+    fn execute_bmi(&mut self, v: u8) {
+        if self.negative
+        { self.execute_branch(v); }
+    }
+
+    fn execute_bne(&mut self, v: u8) {
+        if !self.zero
+        { self.execute_branch(v); }
+    }
+
+    fn execute_bpl(&mut self, v: u8) {
+        if !self.negative
+        { self.execute_branch(v); }
+    }
+
+    fn execute_brk(&mut self) {
+        self.push_stack16(c.pc);
+        self.push_stack(self.status_register_byte(true));
+        self.pc = self.peek16(0xFFFE);
+    }
+
+    fn execute_bvc(&mut self, v: u8) {
+        if !self.overflow
+        { self.execute_branch(v); }
+    }
+
+    fn execute_bvs(&mut self, v: u8) {
+        if self.overflow
+        { self.execute_branch(v); }
+    }
+
+    fn execute_clc(&mut self) {
+        self.carry = false;
+    }
+
+    fn execute_cld(&mut self) {
+        self.decimal = false;
+    }
+
+    fn execute_cli(&mut self) {
+        self.interrupt_disable = false;
+    }
+
+    fn execute_clv(&mut self) {
+        self.overflow = false;
+    }
+
+    fn execute_compare(&mut self, v1: u8, v2: u8) {
+        let result = wrapping_sub(v1, v2);
+        self.carry = (result >= 0);
+        self.zero = (result == 0);
+        self.negative = is_negative(result);
+    }
+
+    fn execute_cmp(&mut self, v: u8) {
+        self.execute_compare(self.acc, v);
+    }
+
+    fn execute_cpx(&mut self, v: u8) {
+        self.execute_compare(self.x, v);
+    }
+
+    fn execute_cpy(&mut self, v: u8) {
+        execute_compare(self.y, v);
+    }
+
+    fn execute_dec(&mut self, v: u8, ptr: Option<u16>) -> u8 {
+        let ret = wrapping_sub(*v, 1);
+        self.update_result_flags(*v);
+        return ret;
+    }
+
+    fn execute_dex(&mut self) {
+        self.execute_dec(c.x);
+    }
+
+    fn execute_dey(&mut self) {
+        self.execute_dec(c.y);
+    }
+
+    fn execute_eor(&mut self, v: u8) {
+        self.acc ^= v;
+        self.update_accumulator_flags();
+    }
+
+    fn execute_inc(&mut self, v: u8&) {
+        *v = wrapping_add(*v, 1);
+        self.update_result_flags(*v);
+    }
+
+    fn execute_inx(&mut self) {
+        self.execute_inc(c.x);
+    }
+
+    fn execute_iny(&mut self) {
+        self.execute_inc(c.y);
+    }
+
+    fn execute_jmp(&mut self, ptr: u16) {
+        self.pc = ptr;
+    }
+
+    fn execute_jsr(&mut self, ptr: u16) {
+        self.push_stack(self.pc);
+        self.pc = ptr;
+    }
+
+    fn execute_lda(&mut self, v: u8) {
+        self.acc = v;
+        self.update_accumulator_flags();
+    }
+
+    fn execute_ldx(&mut self, v: u8) {
+        self.x = v;
+        self.update_result_flags(self.x);
+    }
+
+    fn execute_ldy(&mut self, v: u8) {
+        self.y = v;
+        self.update_result_flags(self.y);
+    }
+
+    fn execute_lsr(&mut self, v: &u8) {
+        self.carry = v & 0b00000001 as bool;
+        v = wrapping_shr(v, 1);
+        self.update_result_flags(v);
+    }
+
+    fn execute_nop(&mut self) { }
+
+    fn execute_ora(&mut self, v: u8) {
+        self.acc |= v;
+        self.update_accumulator_flags();
+    }
+
+    fn execute_pha(&mut self) {
+        self.push_stack(self.acc);
+    }
+
+    fn execute_php(&mut self) {
+        self.push_stack(self.status_register_byte(true));
+    }
+
+    fn execute_pla(&mut self) {
+        self.acc = self.pop_stack();
+        self.update_accumulator_flags();
+    }
+
+    fn execute_plp(&mut self) {
+        self.set_status_register_from_byte(self.pop_stack());
+    }
+
+    fn execute_rol(&mut self, v: &u8) {
+        self.carry = v & (1 << 7) as bool;
+        v = rotate_left(v, 1);
+        self.update_result_flags(v);
+    }
+
+    fn execute_ror(&mut self, v: &u8) {
+        self.carry = v & (1 << 0) as bool;
+        v = rotate_right(v, 1);
+        self.update_result_flags(v);
+    }
+
+    fn execute_rti(&mut self) {
+        self.set_status_register_from_byte(self.pop_stack());
+        self.pc = self.pop_stack16();
+    }
+
+    fn execute_rts(&mut self) {
+        self.pc = self.pop_stack16();
+    }
+
+    fn execute_sbc(&mut self) {
+        let (x1, o1) = overflowing_sub(self.acc, v);
+        let (x2, o2) = overflowing_sub(x1, !self.carry as u8);
+        self.carry = o1 | o2;
+        self.acc = x2;
+        self.update_accumulator_flags();
+    }
+
+    fn execute_sec(&mut self) {
+        self.carry = true;
+    }
+
+    fn execute_sed(&mut self) {
+        self.decimal = true;
+    }
+
+    fn execute_sei(&mut self) {
+        self.interruptd = true;
+    }
+
+    fn execute_sta(&mut self, v: &u8) {
+        *v = self.acc;
+    }
+
+    fn execute_stx(&mut self, v: &u8) {
+        *v = self.x;
+    }
+
+    fn execute_sty(&mut self, v: &u8) {
+        *v = self.y;
+    }
+
+    fn execute_tax(&mut self) {
+        self.x = self.acc;
+        self.update_result_flags(self.x);
+    }
+
+    fn execute_tay(&mut self) {
+        self.y = self.acc;
+        self.update_result_flags(self.y);
+    }
+
+    fn execute_tsx(&mut self) {
+        self.x = self.sp;
+        self.update_result_flags(self.x);
+    }
+
+    fn execute_txa(&mut self) {
+        self.acc = self.x;
+        self.update_accumulator_flags();
+    }
+
+    fn execute_txs(&mut self) {
+        self.sp = self.x;
+    }
+
+    fn execute_tya(&mut self) {
+        self.acc = self.y;
+        self.update_accumulator_flags();
+    }
 }
-
-fn execute_and(v: u8, c: &cpu) {
-    c.acc &= v;
-    update_accumulator_flags(c);
-}
-
-fn execute_asl(v: u8, c: &cpu) {
-    let (x, o) = overflowing_shl(v, c.acc);
-    c.carry = o;
-    c.acc = x;
-    update_accumulator_flags(c);
-}
-
-fn execute_branch(v: u8, c: &cpu) {
-    c.pc += (v as i8);
-}
-
-fn execute_bcc(v: u8, c: &cpu) {
-    if !c.carry
-    { execute_branch(v, c); }
-}
-
-fn execute_bcs(v: u8, c: &cpu) {
-    if c.carry
-    { execute_branch(v, c); }
-}
-
-fn execute_beq(v: u8, c: &cpu) {
-    if c.zero
-    { execute_branch(v, c); }
-}
-
-fn execute_bit(v: u8, c: &cpu) {
-    let x = v & c.acc;
-    c.negative = 0b10000000 & x as bool;
-    c.overflow = 0b01000000 & x as bool;
-    c.zero = (x == 0);
-}
-
-fn execute_bmi(v: u8, c: &cpu) {
-    if c.negative
-    { execute_branch(v, c); }
-}
-
-fn execute_bne(v: u8, c: &cpu) {
-    if !c.zero
-    { execute_branch(v, c); }
-}
-
-fn execute_bpl(v: u8, c: &cpu) {
-    if !c.negative
-    { execute_branch(v, c); }
-}
-
-fn execute_brk(c: &cpu, m: &memory) {
-    push_stack16(c.pc);
-    push_stack(status_register_byte(true, c), c, m);
-    c.pc = peek16(0xFFFE, m);
-}
-
-fn execute_bvc(v: u8, c: &cpu) {
-    if !c.overflow
-    { execute_branch(v, c); }
-}
-
-fn execute_bvs(v: u8, c: &cpu) {
-    if c.overflow
-    { execute_branch(v, c); }
-}
-
-fn execute_clc(c: &cpu) {
-    c.carry = false;
-}
-
-fn execute_cld(c: &cpu) {
-    c.decimal = false;
-}
-
-fn execute_cli(c: &cpu) {
-    c.interrupt_disable = false;
-}
-
-fn execute_clv(c: &cpu) {
-    c.overflow = false;
-}
-
-fn execute_compare(v1: u8, v2: u8, c: &cpu) {
-    let result = wrapping_sub(v1, v2);
-    c.carry = (result >= 0);
-    c.zero = (result == 0);
-    c.negative = is_negative(result);
-}
-
-fn execute_cmp(v: u8, c: &cpu) {
-    execute_compare(c.acc, v, c);
-}
-
-fn execute_cpx(v: u8, c: &cpu) {
-    execute_compare(c.x, v, c);
-}
-
-fn execute_cpy(v: u8, c: &cpu) {
-    execute_compare(c.y, v, c);
-}
-
-fn execute_dec(v: u8&, c: &cpu) {
-    *v = wrapping_sub(*v, 1);
-    update_result_flags(*v);
-}
-
-fn execute_dex(c: &cpu) {
-    execute_dec(c.x, c);
-}
-
-fn execute_dey(c: &cpu) {
-    execute_dec(c.y, c);
-}
-
-fn execute_eor(v: u8, c: &cpu) {
-    c.acc ^= v;
-    update_accumulator_flags(c);
-}
-
-fn execute_inc(v: u8&, c: &cpu) {
-    wrapping_add(*v, 1);
-    update_result_flags(*v, c);
-}
-
-fn execute_inx(c: &cpu) {
-    execute_inc(c.x, c);
-}
-
-fn execute_iny(c: &cpu) {
-    execute_inc(c.y, c);
-}
-
-fn execute_jmp(ptr: u16, c: &cpu) {
-    c.pc = ptr;
-}
-
-fn execute_jsr(ptr: u16, c: &cpu, m: &memory) {
-    push_stack(c.pc, c, m);
-    c.pc = ptr;
-}
-
-fn execute_lda(v: u8, c: &cpu) {
-    c.acc = v;
-    update_accumulator_flags(c);
-}
-
-fn execute_ldx(v: u8, c: &cpu) {
-    c.x = v;
-    update_result_flags(c.x);
-}
-
-fn execute_ldy(v: u8, c: &cpu) {
-    c.y = v;
-    update_result_flags(c.y);
-}
-
-fn execute_lsr(v: &u8, c: &cpu) {
-    c.carry = v & 0b00000001 as bool;
-    v = wrapping_shr(v, 1);
-    update_result_flags(v, c);
-}
-
-fn execute_nop() { }
-
-fn execute_ora(v: u8, c: &cpu) {
-    c.acc |= v;
-    update_accumulator_flags(c);
-}
-
-fn execute_pha(c: &cpu, m: &memory) {
-    push_stack(c.acc, c, m);
-}
-
-fn execute_php(c: &cpu, m: &memory) {
-    push_stack(status_register_byte(true, c), c, m);
-}
-
-fn execute_pla(c: &cpu, m: &memory) {
-    c.acc = pop_stack(c, m);
-    update_accumulator_flags(c);
-}
-
-fn execute_plp(c: &cpu, m: &memory) {
-    set_status_register_from_byte(pop_stack(c, m));
-}
-
-fn execute_rol(v: &u8, c: &cpu) {
-    c.carry = v & (1 << 7) as bool;
-    v = rotate_left(v, 1);
-    update_result_flags(v, c);
-}
-
-fn execute_ror(v: &u8, c: &cpu) {
-    c.carry = v & (1 << 0) as bool;
-    v = rotate_right(v, 1);
-    update_result_flags(v, c);
-}
-
-fn execute_rti(c: &cpu, m: &memory) {
-    set_status_register_from_byte(pop_stack(c, m), c);
-    c.pc = pop_stack16(c, m);
-}
-
-fn execute_rts(c: &cpu, m: &memory) {
-    c.pc = pop_stack16(c, m);
-}
-
-fn execute_sbc(c: &cpu, m: &memory) {
-    let (x1, o1) = overflowing_sub(c.acc, v);
-    let (x2, o2) = overflowing_sub(x1, !c.carry as u8);
-    c.carry = o1 | o2;
-    c.acc = x2;
-    update_accumulator_flags(c);
-}
-
-fn execute_sec(c: &cpu) {
-    c.carry = true;
-}
-
-fn execute_sed(c: &cpu) {
-    c.decimal = true;
-}
-
-fn execute_sei(c: &cpu) {
-    c.interruptd = true;
-}
-
-fn execute_sta(v: &u8, c: &cpu) {
-    *v = c.acc;
-}
-
-fn execute_stx(v: &u8, c: &cpu) {
-    *v = c.x;
-}
-
-fn execute_sty(v: &u8, c: &cpu) {
-    *v = c.y;
-}
-
-fn execute_tax(c: &cpu) {
-    c.x = c.acc;
-    update_result_flags(c.x);
-}
-
-fn execute_tay(c: &cpu) {
-    c.y = c.acc;
-    update_result_flags(c.y);
-}
-
-fn execute_tsx(c: &cpu) {
-    c.x = c.sp;
-    update_result_flags(c.x);
-}
-
-fn execute_txa(c: &cpu) {
-    c.acc = c.x;
-    update_accumulator_flags(c);
-}
-
-fn execute_txs(c: &cpu) {
-    c.sp = c.x;
-}
-
-fn execute_tya(c: &cpu) {
-    c.acc = c.y;
-    update_accumulator_flags(c);
-}
-
 // END instructions
 
 fn lea(ptr: u16, os: i16) -> u16 {
     return wrapped_add(ptr, os as u16);
 }
 
-fn push_stack(v: u8, c: &cpu, m: &memory) {
-    poke_offset(STACK_PAGE, c.sp, m);
-    c.sp = lea(c.sp, -1);
+impl C6502 {
+    fn push_stack(&mut self, v: u8) {
+        self.poke_offset(STACK_PAGE, self.sp);
+        self.sp = lea(self.sp, -1);
+    }
+
+    fn peek_stack(&self) {
+        self.peek_offset(STACK_PAGE, lea(self.sp, 1));
+    }
+
+    fn pop_stack(&mut self) {
+        self.sp = lea(self.sp, 1);
+        return peek_offset(STACK_PAGE, self.sp);
+    }
+
+    fn push_stack16(&mut self, v: u16) {
+        self.push_stack(v & 0xFF);
+        self.push_stack(v & 0xFF00 >> 8);
+    }
+
+    fn pop_stack16(&mut self) -> u16 {
+        let msb = self.pop_stack();
+        let lsb = self.pop_stack();
+        return msb << 8 + lsb;
+    }
 }
 
-fn peek_stack(c: &cpu, m: &memory) {
-    peek_offset(STACK_PAGE, lea(c.sp, 1), m);
+impl AddressSpace for C6502 {
+    fn peek(&self, ptr) { return self.mapper.peek(ptr); }
+    fn poke(&self, ptr, v) { return self.mapper.poke(ptr); }
 }
 
-fn pop_stack(c: &cpu, m: &memory) {
-    c.sp = lea(c.sp, 1);
-    return peek_offset(STACK_PAGE, c.sp, m);
-}
+impl C6502 {
+    fn update_result_flags(&mut self, v: u8) {
+        self.zero = (v == 0);
+        self.negative = is_negative(v);
+    }
 
-fn push_stack16(v: u16, c: &cpu, m: &memory) {
-    push_stack(v & 0xFF, c, m);
-    push_stack(v & 0xFF00 >> 8, c, m);
-}
+    fn update_accumulator_flags(&mut self) {
+        self.update_result_flags(self.acc);
+    }
 
-fn pop_stack16(c: &cpu, m: &memory) {
-    let msb = pop_stack(c, m);
-    let lsb = pop_stack(c, m);
-    return msb << 8 + lsb;
-}
+    fn status_register_byte(c: &Self, is_instruction: bool) -> u8 {
+        let result =
+            (c.carry      as u8) << 0 +
+            (c.zero       as u8) << 1 +
+            (c.interruptd as u8) << 2 +
+            (c.decimal    as u8) << 3 +
+            0                    << 4 + // Break flag
+            1                    << 5 +
+            (c.overflow   as u8) << 6 +
+            (c.negative   as u8) << 7;
+        return result;
+    }
 
-fn peek(ptr: u16, m: &memory) -> u8 {
-    return m[ptr];
-}
-
-fn peek16(ptr: u16, m: &memory) -> u16 {
-    return peek(ptr, m) + peek(lea(ptr, 1), m) << 8;
-}
-
-fn peek_offset(ptr: u16, os: i16, m: &memory) -> u8 {
-    return peek(lea(ptr, os), m);
-}
-
-fn peek_offset16(ptr: u16, os: i16, m: &memory) -> u16 {
-    return peek16(lea(ptr, os), m);
-}
-
-fn poke(ptr: u16, v: u8, m: &memory) {
-    m[ptr] = v;
-}
-
-fn poke_offset(ptr: u16, os: i16, v: u8, m: &memory) {
-    poke(lea(ptr, os), v, m);
-}
-
-fn update_result_flags(v: u8, c: &cpu) {
-    c.zero = (v == 0);
-    c.negative = is_negative(v);
-}
-
-fn update_accumulator_flags(c: &cpu) {
-    update_result_flags(c.acc, c);
+    fn set_status_register_from_byte(c: &mut Self, v: u8) {
+        c.carry      = v & 0b00000001 as bool;
+        c.zero       = v & 0b00000010 as bool;
+        c.interruptd = v & 0b00000100 as bool;
+        c.decimal    = v & 0b00001000 as bool;
+        // Break isn't a real register
+        // Bit 5 is unused
+        c.overflow   = v & 0b01000000 as bool;
+        c.negative   = v & 0b10000000 as bool;
+    }
 }
 
 fn is_negative(v: u8) -> bool {
     return (v >= 128);
-}
-
-fn status_register_byte(is_instruction: bool, c: &cpu) -> u8 {
-    let result =
-        (c.carry      as u8) << 0 +
-        (c.zero       as u8) << 1 +
-        (c.interruptd as u8) << 2 +
-        (c.decimal    as u8) << 3 +
-        0                    << 4 + // Break flag
-        1                    << 5 +
-        (c.overflow   as u8) << 6 +
-        (c.negative   as u8) << 7;
-    return result;
-}
-
-fn set_status_register_from_byte(v: u8, c: &cpu) {
-    c.carry      = v & 0b00000001 as bool;
-    c.zero       = v & 0b00000010 as bool;
-    c.interruptd = v & 0b00000100 as bool;
-    c.decimal    = v & 0b00001000 as bool;
-    // Break isn't a real register
-    // Bit 5 is unused
-    c.overflow   = v & 0b01000000 as bool;
-    c.negative   = v & 0b10000000 as bool;
 }

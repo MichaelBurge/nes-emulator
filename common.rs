@@ -1,6 +1,20 @@
 trait AddressSpace {
+    // Minimal definition
     fn peek(&self, ptr: u16) -> u8;
     fn poke(&mut self, ptr: u16, v: u8);
+
+    // Helper methods
+    fn peek16(&self, ptr:u16) -> u16 {
+        return
+            self.peek(ptr) +
+            self.peek(wrapped_add(ptr, 1)) << 8;
+    }
+    fn peek_offset(&self, ptr: u16, os: i16) -> u8 {
+        self.peek(wrapped_add(ptr, os as u16));
+    }
+    fn peek_offset16(&self, ptr: u16, os: i16) -> u16 {
+        self.peek16(wrapped_add(ptr, os as u16));
+    }
 }
 
 struct FlatMemory {
@@ -16,6 +30,7 @@ impl AddressSpace for FlatMemory {
         self.bs[ptr] = v;
     }
 }
+
 
 
 // If a memory range has been mirrored to another, map a pointer to the "base range" or fail if it lies outside.
