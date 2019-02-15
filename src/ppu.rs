@@ -49,19 +49,20 @@ struct Sprite {
 enum PaletteType { PALETTE_SPRITE, PALETTE_BACKGROUND };
 
 // https://wiki.nesdev.com/w/index.php/PPU_rendering
-const RENDER_SIZE = 256 * 240;
+const RENDER_WIDTH = 256;
+const RENDER_HEIGHT = 240;
+const RENDER_SIZE = RENDER_WIDTH * RENDER_HEIGHT;
 impl Ppu {
-    fn render(&self) -> [u8; RENDER_SIZE] {
-        let global_background_color = self.lookup_global_background_color();
-        let ret = array(global_background_color, RENDER_SIZE);
+    fn render(&self, buffer: &mut [u8; RENDER_SIZE]) {
         for y in range 0..239 {
             let ptr_base = 256 * y;
-            self.render_scanline(y, ret[ptr_base .. ptr_base+256]);
+            self.render_scanline(y, buffer[ptr_base .. ptr_base+256]);
         }
     }
 
     // https://wiki.nesdev.com/w/index.php/PPU_sprite_priority
     fn render_scanline(&self, y: u8, b: &[u8; 256]) {
+        let global_background_color = self.lookup_global_background_color();
         // Each PPU clock cycle produces one pixel. The HBlank period is used to perform memory accesses.
         let sprites = self.fetch_scanline_sprites(y);
         for x in 0..255 {
@@ -84,10 +85,15 @@ impl Ppu {
                 };
 
             let is_sprite_opaque = (sprite_color != COLOR_TRANSPARENT);
+            let is_background_opaque = (background_color != COLOR_TRANSPARENT);
             if is_sprite_front and is_sprite_opaque {
                 b[x] = sprite_color;
-            } else {
+            } else if is_background_opaque {
                 b[x] = background_color;
+            } else if is_sprite_opaque {
+                b[x] = sprite_color;
+            } else {
+                b[x] = global_background_color;
             }
         }
     }

@@ -3,6 +3,7 @@ extern crate sdl2;
 use sdl2::pixels::Color;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
+use sdl2::surface::Surface;
 use std::time::Duration;
 
 // https://wiki.nesdev.com/w/index.php/Cycle_reference_chart
@@ -17,6 +18,8 @@ fn main() {
         .unwrap();
 
     let mut canvas = window.into_canvas().build().unwrap();
+    let mut render_surface = Surface::new(RENDER_WIDTH, RENDER_HEIGHT, PixelFormatEnum::Index8);
+    let nes = create_nes();
 
     canvas.set_draw_color(Color::RGB(0, 255, 255));
     canvas.clear();
@@ -37,6 +40,8 @@ fn main() {
             }
         }
         // The rest of the game loop goes here...
+        render_frame(nes, render_surface);
+        render_surface.blit(None, canvas.surface_mut(), None);
 
         canvas.present();
         ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
@@ -44,12 +49,12 @@ fn main() {
 }
 
 fn create_nes() -> Nes {
-    ret = Nes();
-    let rom = load_ines("roms/nestest.nes");
-    ret.load_rom(rom);
-    return ret;
+    let rom = read_ines("roms/nestest.nes");
+    return load_ines(rom);
 }
 
-fn render_frame(nes: Nes) {
+fn render_frame(nes: Nes, surface: Surface) {
     run_clocks(nes, 29780);
+    let (Some(buffer)) = surface.without_lock_mut();
+    nes.ppu.render(buffer);
 }

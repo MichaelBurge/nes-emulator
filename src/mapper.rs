@@ -74,6 +74,12 @@ impl AddressSpace for MirroredAddressSpace {
     }
 }
 
+struct NullAddressSpace { };
+impl AddressSpace for NullAddressSpace {
+    fn peek(&self, ptr) { return 0; }
+    fn poke(&mut self, ptr, value) { }
+}
+
 struct RegisterAddressSpace {
     register: &mut u8;
 }
@@ -90,41 +96,43 @@ impl AddressSpace for RegisterAddressSpace {
 }
 
 type NumBytes = u16;
-
+type UsesOriginalAddress = bool;
 struct Mapper {
-    next_ptr: u16;
-    mappings: Vec<(NumBytes, Box<AddressSpace>)>;
+    mappings: Vec<(u16, u16, Box<AddressSpace>, UsesOriginalAddress)>;
 }
 
 impl Mapper {
     fn lookup_address_space(ptr: u16) -> (Box<AddressSpace>, u16) {
-        for (size, space) in mappings {
-            if ptr < size {
-                return (space, ptr);
-            } else {
-                ptr -= space;
+        for (range_begin, range_end, space, use_original_address) in mappings {
+            if ptr >= range_begin && ptr <= range_end {
+                return (space, use_original_address ? ptr : (ptr - range_begin));
             }
         }
         panic!("lookup_address_space - Unmapped pointer");
     }
-    fn map_address_space(size: u16, space: Box<AddressSpace>) {
-        self.next_ptr += size;
-        self.mappings.push(size, space);
+    fn map_address_space(begin: u16, end: u16, space: Box<AddressSpace>, use_original: bool) {
+        self.mappings.push(begin, end, space, use_original);
     }
 
-    fn map_ram(size: u16) {
-        self.map_address_space(size, Box::new(Ram(size)));
+    fn map_ram(begin: u16, end: u16) {
+        let size = end - begin;
+        self.map_address_space(begin, end, Box::new(Ram(size)), false);
     }
-    fn map_rom(bytes: &[u8]) {
-        self.map_address_space(bytes.length, Box::new(Rom(vec!(bytes))));
+    fn map_rom(begin: u16, end: u16, bytes: &[u8]) {
+        self.map_address_space(begin, end, Box::new(Rom(vec!(bytes))), false);
     }
-    fn map_mirrored(size: u16, extended_size: u16, space: &AddressSpace) {
+    fn map_null(begin: u16, end: u16) {
+        self.map_address_space(begin, end, Box::new(NullAddressSpace::New()), false);
+    }
+    fn map_mirrored(begin: u16, end: u16, extended_begin: u16, extended_end: u16, space: &AddressSpace, use_original: bool) {
+        let base_begin =
+            if use_original { begin } else { 0 };
         let space = MirroredAddressSpace::new(
             space,
-            0, size,
-            self.next_ptr, self.next_ptr + extended_size
+            base_begin, size,
+            extended_begin, extended_end,
         );
-        self.map_address_space(extended_size, Box::new(space));
+        self.map_address_space(extended_size, Box::new(space), use_original);
     }
     fn map_register(register: &mut u8) {
         self.map_address_space(1, Box::new(RegisterAddressSpace::new(register)));

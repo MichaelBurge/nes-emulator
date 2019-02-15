@@ -12,33 +12,107 @@ struct Nes {
     cartridge: [u8;15000],
 }
 
-enum Mapper {
-}
-
 struct Rom {
     mapper: Mapper,
 }
 
-fn read_ines(filename: String) -> Rom {
+fn read_byte(fh: File) -> u8 {
+    let bs:[u8;1] = [0];
+    fh.read_exact(&bs);
+    return bs[0];
+}
+
+struct Ines {
+    num_prg_chunks: u8,
+    num_chr_chunks: u8,
+    mapper: u8,
+    mirroring: bool,
+    has_battery_backed_ram: bool,
+    has_trainer: bool,
+    has_four_screen_vram: bool,
+    is_vs_unisystem: bool,
+    is_playchoice10: bool,
+    prg_rom: Vec<u8>;
+}
+
+fn read_ines(filename: String) -> Ines {
+    // https://wiki.nesdev.com/w/index.php/INES
+    let mut file = File::open(filename);
+    // Header
+    let header:[u8;16];
+    fh.read_exact(&header);
+    let ret = Ines::new();
+    assert(header[0] == 0x4e);
+    assert(header[1] == 0x45);
+    assert(header[2] == 0x53);
+    assert(header[3] == 0x1a);
+    ret.num_prg_chunks = header[4];
+    ret.num_chr_chunks = header[5];
+    ret.mirroring = get_bit(header[6], 0) as bool;
+    ret.has_battery_backed_ram = get_bit(header[6], 1) as bool;
+    ret.has_trainer = get_bit(header[6], 2) as bool;
+    ret.has_four_screen_vram = get_bit(header[6], 3) as bool;
+    ret.mapper =
+        (header[6] >> 4) +
+        (header[7] >> 4) << 4;
+    ret.prg_rom = Vec<u8>::new();
+    for i in 0 .. ret.num_prg_chunks {
+        let bf = vec!(16384);
+        fh.read_exact(&bf);
+        ret.prg_rom.append(bf);
+    }
+    return Ines;
+}
+
+fn load_ines(rom: Ines) -> Nes {
+    assert(rom.mapper == 0);
+    let cartridge = Rom::new(rom.prg_rom);
+    let ret = Nes::new();
+    ret.map_nes_cpu(cartridge);
+    return ret;
+}
+struct CpuPpuInterconnect {
+    ppu: &Ppu;
+}
+
+impl CpuPpuInterconnect {
+    fn map_ppu_port(ptr: u16) -> Option<PpuPort> {
+        match ptr {
+            0x2000 => Some(PPUCTRL),
+            0x2001 => Some(PPUMASK),
+            0x2002 => Some(PPUSTATUS),
+            0x2003 => Some(OAMADDR),
+            0x2004 => Some(OAMDATA),
+            0x2005 => Some(PPUSCROLL),
+            0x2006 => Some(PPUADDR),
+            0x2007 => Some(PPUDATA),
+            0x4014 => Some(OAMDMA),
+            _      => None
+        }
+    }
+}
+
+impl AddressSpace for CpuPpuInterconnect {
+    fn peek(&self, ptr) {
+        return self.ppu.signal_read(map_ppu_port(ptr).expect("Unknown PPU Address"));
+    }
+    fn poke(&mut self, ptr, value) {
+        self.ppu.signal_write(map_ppu_port(ptr).expect("Unknown PPU Address"));
+    }
 }
 
 impl Nes {
-    fn load_rom(r: &Rom) {
+    fn map_nes_cpu(&self, cartridge: AddressSpace) {
+        // https://wiki.nesdev.com/w/index.php/CPU_memory_map
+        self.cpu.map_mirrored(0x0000, 0x07ff, 0x0000, 0x1fff, Ram::new(0x0800), false);
+        self.cpu.map_mirrored(0x2000, 0x2007, 0x2000, 0x3fff, CpuPpuInterconnect::new(self.ppu), true);
+        // TODO - OAMDMA should initiate a memory transfer
+        self.cpu.map_null(0x4000, 0x4015); // APU/Joystick ports
+        self.cpu.map_address_space(0x4016, 0x4016, self.joystick1, false);
+        self.cpu.map_address_space(0x4017, 0x4017, self.joystick2, false);
 
-    }
-}
-fn map_ppu_port(ptr: u16) -> Option<PpuPort> {
-    match ptr {
-        0x2000 => Some(PPUCTRL),
-        0x2001 => Some(PPUMASK),
-        0x2002 => Some(PPUSTATUS),
-        0x2003 => Some(OAMADDR),
-        0x2004 => Some(OAMDATA),
-        0x2005 => Some(PPUSCROLL),
-        0x2006 => Some(PPUADDR),
-        0x2007 => Some(PPUDATA),
-        0x4014 => Some(OAMDMA),
-        _      => None
+        self.cpu.map_null(0x4018, 0x401F); // APU test mode
+        self.cpu.map_address_space(0x4020, 0xFFFF, cartridge, true);
     }
 }
 
@@ -73,43 +147,6 @@ impl Clocked for Nes {
     fn clock(&mut self) {
         self.cpu.clock();
         for i in 1..3 { self.ppu.clock(); }
-    }
-}
-
-// https://wiki.nesdev.com/w/index.php/CPU_memory_map
-impl AddressSpace for Nes {
-    fn peek(&self, ptr) -> u8 {
-        if let Some(base_ptr) = mirrored_lea(ptr, 0x0000, 0x07ff, 0x0000, 0x1fff) {
-            return self.ram[base_ptr];
-        }
-        if let Some(base_ptr) = mirrored_lea(ptr, 0x2000, 0x2007, 0x2000, 0x3fff) {
-            return self.ppu.signal_read(map_ppu_port(base_ptr).expect("Unknown PPU Port"));
-        }
-        if let apu_port = map_apu_port(ptr) {
-            return self.apu.signal_read(apu_port);
-        }
-        if ptr == 0x4016 { return self.joystick1.signal_read(); }
-        if ptr == 0x4017 { return self.joystick2.signal_read(); }
-        if ptr >= 0x4018 && ptr <= 0x401F { return 0; /* UNUSED REGISTERS */ }
-        return cartridge[ptr - 0x4020];
-    }
-    fn poke(&mut self, ptr, v) {
-        if let Some(base_ptr) = mirrored_lea(ptr, 0x0000, 0x07ff, 0x0000, 0x1fff) {
-            self.ram[base_ptr] = v;
-            return;
-        }
-        if let Some(base_ptr) = mirrored_lea(ptr, 0x2000, 0x2007, 0x2000, 0x3fff) {
-            let port = map_ppu_port(base_ptr).expect("Unknown PPU Port");
-            return self.ppu.signal_write(port, v);
-        }
-        // TODO: OAMDMA should initiate a memory transfer
-        if let apu_port = map_apu_port(ptr) {
-            return self.apu.signal_write(apu_port);
-        }
-        if ptr == 0x4016 { return self.joystick1.signal_write(v); }
-        if ptr == 0x4017 { return self.joystick2.signal_write(v); }
-        if ptr >= 0x4018 && ptr <= 0x401F { return; /* UNUSED REGISTERS */ }
-        return; // Cartridge is read-only
     }
 }
 
