@@ -115,7 +115,7 @@ impl Ppu {
     }
 
     fn lookup_pattern_color(&self, palette_type: PaletteType, tile_index: u8, xsub: u8, ysub: u8) -> PatternColor {
-        // TODO https://wiki.nesdev.com/w/index.php/PPU_pattern_tables
+        // https://wiki.nesdev.com/w/index.php/PPU_pattern_tables
         let ptr_pattern_table_base = 0x0000;
         let size_pattern_table = 0x1000;
         let size_tile = 16;

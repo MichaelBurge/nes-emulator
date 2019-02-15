@@ -12,6 +12,21 @@ struct Nes {
     cartridge: [u8;15000],
 }
 
+enum Mapper {
+}
+
+struct Rom {
+    mapper: Mapper,
+}
+
+fn read_ines(filename: String) -> Rom {
+}
+
+impl Nes {
+    fn load_rom(r: &Rom) {
+
+    }
+}
 fn map_ppu_port(ptr: u16) -> Option<PpuPort> {
     match ptr {
         0x2000 => Some(PPUCTRL),
@@ -54,7 +69,7 @@ fn map_apu_port(ptr: u16) -> Option<ApuPort> {
     }
 }
 
-impl Nes {
+impl Clocked for Nes {
     fn clock(&mut self) {
         self.cpu.clock();
         for i in 1..3 { self.ppu.clock(); }

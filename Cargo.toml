@@ -1,0 +1,8 @@
+[package]
+name = "rusty"
+version = "0.1.0"
+authors = ["Michael Burge <michaelburge@pobox.com>"]
+edition = "2018"
+
+[dependencies]
+sdl2 = "0.32"
