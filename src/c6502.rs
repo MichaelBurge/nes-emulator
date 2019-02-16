@@ -1,4 +1,4 @@
-use "common.rs";
+use crate::mapper;
 
 // Ricoh 2A03, a variation of the 6502
 struct C6502 {
@@ -45,21 +45,21 @@ enum AddressingMode {
     implicit,
 }
 
-const STACK_PAGE = 0x0100u16;
+const STACK_PAGE:u16 = 0x0100;
 
 type CycleCount = u8;
 
 //
-const abs = absolute;
-const acc = accumulator;
-const imm = immediate;
-const imp = implicit;
-const izx = indirect_x;
-const zp  = zero_page;
-const zpx = zero_page_x;
-const rel = relative;
-const abx = absolute_x;
-const aby = absolute_y;
+const abs:AddressingMode = absolute;
+const acc:AddressingMode = accumulator;
+const imm:AddressingMode = immediate;
+const imp:AddressingMode = implicit;
+const izx:AddressingMode = indirect_x;
+const zp:AddressingMode  = zero_page;
+const zpx:AddressingMode = zero_page_x;
+const rel:AddressingMode = relative;
+const abx:AddressingMode = absolute_x;
+const aby:AddressingMode = absolute_y;
 
 // Opcode table: http://www.oxyron.de/html/opcodes02.html
 const opcode_table: [(Operation, AddressingMode, CycleCount, CycleCount)] =
@@ -482,7 +482,7 @@ impl C6502 {
     }
 
     fn execute_branch(&mut self, v: u8) {
-        self.pc += (v as i8);
+        self.pc += v as i8;
     }
 
     fn execute_bcc(&mut self, v: u8) {
@@ -504,7 +504,7 @@ impl C6502 {
         let x = v & self.acc;
         self.negative = 0b10000000 & x as bool;
         self.overflow = 0b01000000 & x as bool;
-        self.zero = (x == 0);
+        self.zero = x == 0;
     }
 
     fn execute_bmi(&mut self, v: u8) {
@@ -556,8 +556,8 @@ impl C6502 {
 
     fn execute_compare(&mut self, v1: u8, v2: u8) {
         let result = wrapping_sub(v1, v2);
-        self.carry = (result >= 0);
-        self.zero = (result == 0);
+        self.carry = result >= 0;
+        self.zero = result == 0;
         self.negative = is_negative(result);
     }
 
@@ -592,7 +592,7 @@ impl C6502 {
         self.update_accumulator_flags();
     }
 
-    fn execute_inc(&mut self, v: u8&) {
+    fn execute_inc(&mut self, v: &u8) {
         *v = wrapping_add(*v, 1);
         self.update_result_flags(*v);
     }
@@ -775,13 +775,13 @@ impl C6502 {
 }
 
 impl AddressSpace for C6502 {
-    fn peek(&self, ptr) { return self.mapper.peek(ptr); }
-    fn poke(&self, ptr, v) { return self.mapper.poke(ptr); }
+    fn peek(&self, ptr:u16) { return self.mapper.peek(ptr); }
+    fn poke(&self, ptr:u16, v:u8) { return self.mapper.poke(ptr); }
 }
 
 impl C6502 {
     fn update_result_flags(&mut self, v: u8) {
-        self.zero = (v == 0);
+        self.zero = v == 0;
         self.negative = is_negative(v);
     }
 
@@ -815,5 +815,5 @@ impl C6502 {
 }
 
 fn is_negative(v: u8) -> bool {
-    return (v >= 128);
+    return v >= 128;
 }

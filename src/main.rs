@@ -1,3 +1,6 @@
+mod common;
+mod c6502;
+
 extern crate sdl2;
 
 use sdl2::pixels::PixelFormatEnum;
