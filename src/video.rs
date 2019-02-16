@@ -74,3 +74,7 @@ const system_palette:SystemPalette =
         (0,   0,   0),   // xE
         (0,   0,   0),   // xF
     ];
+
+fn lookup_system_pixel(i: SystemColor) -> RgbColor {
+    return system_palette[i];
+}
