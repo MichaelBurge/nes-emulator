@@ -1,4 +1,4 @@
-trait AddressSpace {
+pub trait AddressSpace {
     // Minimal definition
     fn peek(&self, ptr: u16) -> u8;
     fn poke(&mut self, ptr: u16, v: u8);
@@ -17,6 +17,9 @@ trait AddressSpace {
     }
     fn peek_offset16(&self, ptr: u16, os: i16) -> u16 {
         return self.peek16(ptr.wrapping_add(os as u16));
+    }
+    fn poke_offset(&mut self, ptr: u16, os: i16, v: u8) {
+        self.poke(ptr.wrapping_add(os as u16), v);
     }
 }
 

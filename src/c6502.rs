@@ -1,4 +1,6 @@
-use crate::mapper;
+#![allow(non_upper_case_globals)]
+
+use mapper::AddressSpace;
 
 // Ricoh 2A03, a variation of the 6502
 struct C6502 {
@@ -16,6 +18,7 @@ struct C6502 {
     mapper: AddressSpace,
 }
 
+#[derive(Copy, Clone, Debug)]
 enum Operation {
     ADC, AND, ASL, BCC,
     BCS, BEQ, BIT, BMI,
@@ -32,37 +35,48 @@ enum Operation {
     STX, STY, TAX, TAY,
     TSX, TXA, TXS, TYA,
     // "Extra" opcodes
-    KIL,
+    KIL,ISC,DCP,AXS,
+    LAS,LAX,AHX,SAX,
+    XAA,SHX,RRA,TAS,
+    SHY,ARR,SRE,ALR,
+    RLA,ANC,SLO,
 }
 
+#[derive(Copy,Clone)]
 enum AddressingMode {
-    immediate,
-    zero_page, zero_page_x,
-    absolute, absolute_x, absolute_y,
-    indirect, indirect_x, indirect_y,
-    relative,
-    accumulator,
-    implicit,
+    Immediate,
+    ZeroPage,ZeroPageX,ZeroPageY,
+    Absolute,AbsoluteX,AbsoluteY,
+    Indirect,IndirectX,IndirectY,
+    Relative,
+    Accumulator,
+    Implicit,
 }
+
+use Operation::*;
+use AddressingMode::*;
 
 const STACK_PAGE:u16 = 0x0100;
 
 type CycleCount = u8;
 
 //
-const abs:AddressingMode = absolute;
-const acc:AddressingMode = accumulator;
-const imm:AddressingMode = immediate;
-const imp:AddressingMode = implicit;
-const izx:AddressingMode = indirect_x;
-const zp:AddressingMode  = zero_page;
-const zpx:AddressingMode = zero_page_x;
-const rel:AddressingMode = relative;
-const abx:AddressingMode = absolute_x;
-const aby:AddressingMode = absolute_y;
+const abs:AddressingMode = Absolute;
+const acc:AddressingMode = Accumulator;
+const imm:AddressingMode = Immediate;
+const imp:AddressingMode = Implicit;
+const izx:AddressingMode = IndirectX;
+const izy:AddressingMode = IndirectY;
+const zp:AddressingMode  = ZeroPage;
+const zpx:AddressingMode = ZeroPageX;
+const zpy:AddressingMode = ZeroPageY;
+const rel:AddressingMode = Relative;
+const abx:AddressingMode = AbsoluteX;
+const aby:AddressingMode = AbsoluteY;
+const ind:AddressingMode = Indirect;
 
 // Opcode table: http://www.oxyron.de/html/opcodes02.html
-const opcode_table: [(Operation, AddressingMode, CycleCount, CycleCount)] =
+const OPCODE_TABLE: [(Operation, AddressingMode, CycleCount, CycleCount);256] =
     // TODO Audit each record to see that it was input correctly
     // (Operation, addressing mode, clock cycles, extra clock cycles if page boundary crossed)
     [   // 0x
@@ -327,7 +341,7 @@ const opcode_table: [(Operation, AddressingMode, CycleCount, CycleCount)] =
         (ISC, izy, 8, 0), // x3
         (NOP, zpx, 4, 0), // x4
         (SBC, zpx, 4, 0), // x5
-        (INC, npx, 6, 0), // x6
+        (INC, zpx, 6, 0), // x6
         (ISC, zpx, 6, 0), // x7
         (SED, imp, 2, 0), // x8
         (SBC, aby, 4, 1), // x9
@@ -347,40 +361,43 @@ struct Instruction {
 
 impl C6502 {
     fn clock(&mut self) {
-        let i = self.decode_instruction();
+        let (i, num_bytes) = self.decode_instruction();
         self.execute_instruction(i);
+        self.pc = self.pc.wrapping_add(num_bytes);
     }
 
-    fn decode_instruction(&self) -> Instruction {
+    fn decode_instruction(&self) -> (Instruction, u16) {
         let ptr = self.pc;
-        let opcode = self.peek(ptr);
-        let (op, mode, clocks, page_clocks) = opcode_table[opcode];
-        let mode_args = self.decode_addressing_mode(mode, wrapped_add(ptr, 1));
-        return instruction(op, mode, mode_args);
+        let opcode = self.peek(ptr) as usize;
+        let (op, mode, clocks, page_clocks) = OPCODE_TABLE[opcode];
+        let (mode_args, num_arg_bytes) = self.decode_addressing_mode(mode, ptr.wrapping_add(1));
+        let instruction = Instruction { op, mode, mode_args };
+        return (instruction, 1 + num_arg_bytes);
     }
 
-    fn read_write_target(&self, write_target: Option<u16>) {
+    fn read_write_target(&self, write_target: Option<u16>) -> u8 {
         match write_target {
             None => self.acc,
             Some(ptr) => self.peek(ptr),
         }
     }
 
-    fn store_write_target(&self, v: u8, write_target: Option<u16>) {
+    fn store_write_target(&mut self, v: u8, write_target: Option<u16>) {
         match write_target {
             None => { self.acc = v },
             Some(ptr) => { self.poke(ptr, v); },
         }
     }
 
-    fn execute_instruction(&mut self) {
-        let v = self.decode_addressing_mode(i.addressing_mode, wrapped_add(c.pc, 1));
-        let write_target = match mode {
-            accumulator => None,
-            _           => v,
+    fn execute_instruction(&mut self, i: Instruction) {
+        let v16 = i.mode_args;
+        let v = i.mode_args as u8;
+        let write_target = match i.mode {
+            Accumulator => None,
+            _           => Some(v16),
         };
 
-        match op {
+        match i.op {
             ADC => { self.execute_adc(v) },
             AND => { self.execute_and(v) },
             ASL => { self.execute_asl(v) },
@@ -400,36 +417,53 @@ impl C6502 {
             CMP => { self.execute_cmp(v) },
             CPX => { self.execute_cpx(v) },
             CPY => { self.execute_cpy(v) },
-            DEC => { self.store_write_target(self.execute_dec(self.read_write_target(write_target))) },
+            DEC => { let i = self.read_write_target(write_target);
+                     let o = self.execute_dec(i);
+                     self.store_write_target(o, write_target);
+            },
             DEX => { self.execute_dex() },
             DEY => { self.execute_dey() },
             EOR => { self.execute_eor(v) },
-            INC => { self.store_write_target(self.execute_inc(self.read_write_target(write_target))) },
+            INC => { let i = self.read_write_target(write_target);
+                     let o = self.execute_inc(i);
+                     self.store_write_target(o, write_target);
+            },
             INX => { self.execute_inx() },
             INY => { self.execute_inx() },
-            JMP => { self.execute_jmp(v) },
-            JSR => { self.execute_jsr(v) },
+            JMP => { self.execute_jmp(v16) },
+            JSR => { self.execute_jsr(v16) },
             LDA => { self.execute_lda(v) },
             LDX => { self.execute_ldx(v) },
             LDY => { self.execute_ldy(v) },
-            LSR => { self.store_write_target(self.execute_lsr(self.read_write_target(write_target))) },
+            LSR => { let i = self.read_write_target(write_target);
+                     let o = self.execute_lsr(i);
+                     self.store_write_target(o, write_target);
+            },
             NOP => { self.execute_nop() },
             ORA => { self.execute_ora(v) },
             PHA => { self.execute_pha() },
             PHP => { self.execute_php() },
             PLA => { self.execute_pla() },
             PLP => { self.execute_plp() },
-            ROL => { self.store_write_target(self.execute_rol(self.read_write_target(write_target))) },
-            ROR => { self.store_write_target(self.execute_ror(self.read_write_target(write_target))) },
+            ROL => { let i = self.read_write_target(write_target);
+                     let o = self.execute_rol(i);
+                     self.store_write_target(o, write_target);
+            },
+            ROR => { let i = self.read_write_target(write_target);
+                     let o = self.execute_ror(i);
+                     self.store_write_target(o, write_target); },
             RTI => { self.execute_rti() },
             RTS => { self.execute_rts() },
-            SBC => { self.execute_sbc() },
+            SBC => { self.execute_sbc(v) },
             SEC => { self.execute_sec() },
             SED => { self.execute_sed() },
             SEI => { self.execute_sei() },
-            STA => { self.store_write_target(self.execute_sta(self.read_write_target(write_target))) },
-            STX => { self.store_write_target(self.execute_stx(self.read_write_target(write_target))) },
-            STY => { self.store_write_target(self.execute_sty(self.read_write_target(write_target))) },
+            STA => { let o = self.acc;
+                     self.store_write_target(o, write_target) },
+            STX => { let o = self.x;
+                     self.store_write_target(o, write_target) },
+            STY => { let o = self.y;
+                     self.store_write_target(o, write_target) },
             TAX => { self.execute_tax() },
             TAY => { self.execute_tay() },
             TSX => { self.execute_tsx() },
@@ -437,23 +471,26 @@ impl C6502 {
             TXS => { self.execute_txs() },
             TYA => { self.execute_tya() },
             KIL => { panic!("KIL instruction encountered") },
+            _ => { self.execute_unimplemented(i.op) },
         }
     }
 
-    fn decode_addressing_mode(&self, mode: addressing_mode, ptr: u16) -> u16 {
+    // Returns the instruction arguments and the number of bytes after the opcode they took to store.
+    fn decode_addressing_mode(&self, mode: AddressingMode, ptr: u16) -> (u16, u16) {
         match mode {
-            immediate   => self.peek(ptr),
-            zero_page   => self.peek(self.peek(ptr)),
-            zero_page_x => self.peek_offset(peek(ptr), c.x),
-            absolute    => self.peek16(ptr),
-            absolute_x  => self.peek_offset16(ptr, c.x),
-            absolute_y  => self.peek_offset16(ptr, c.y),
-            indirect    => self.peek16(self.peek16(ptr)),
-            indirect_x  => self.peek16(self.peek_offset(ptr, c.x)),
-            indirect_y  => self.peek16(self.peek_offset(ptr, c.y)),
-            relative    => self.peek(ptr),
-            accumulator => 0xDEAD,
-            implicit    => 0xDEAD,
+            Immediate   => (self.peek(ptr) as u16, 1),
+            ZeroPage    => (self.peek(self.peek(ptr) as u16) as u16, 1),
+            ZeroPageX   => (self.peek(ptr).wrapping_add(self.x) as u16, 1),
+            ZeroPageY   => (self.peek(ptr).wrapping_add(self.y) as u16, 1),
+            Absolute    => (self.peek16(ptr), 2),
+            AbsoluteX   => (self.peek_offset16(ptr, self.x as i16), 1),
+            AbsoluteY   => (self.peek_offset16(ptr, self.y as i16), 1),
+            Indirect    => (self.peek16(self.peek16(ptr)), 2),
+            IndirectX   => (self.peek16(self.peek(ptr).wrapping_add(self.x) as u16), 1),
+            IndirectY   => (self.peek_offset16(self.peek(ptr) as u16, self.y as i16), 1),
+            Relative    => (self.peek(ptr) as u16, 1),
+            Accumulator => (0xDEAD, 0),
+            Implicit    => (0xDEAD, 0),
         }
     }
 }
@@ -461,11 +498,11 @@ impl C6502 {
 // BEGIN instructions
 
 impl C6502 {
-    fn execute_adc(&self, v: u8) {
-        let (x1, o1) = overflowing_add(v, self.acc);
-        let (x2, o2) = overflowing_add(x1, self.carry as u8);
-        c.carry = o1 | o2;
-        c.acc = x2;
+    fn execute_adc(&mut self, v: u8) {
+        let (x1, o1) = v.overflowing_add(self.acc);
+        let (x2, o2) = x1.overflowing_add(self.carry as u8);
+        self.carry = o1 | o2;
+        self.acc = x2;
         self.update_accumulator_flags();
     }
 
@@ -475,14 +512,14 @@ impl C6502 {
     }
 
     fn execute_asl(&mut self, v: u8) {
-        let (x, o) = overflowing_shl(v, self.acc);
+        let (x, o) = v.overflowing_shl(self.acc as u32);
         self.carry = o;
         self.acc = x;
         self.update_accumulator_flags();
     }
 
     fn execute_branch(&mut self, v: u8) {
-        self.pc += v as i8;
+        self.pc += (v as i8) as u16;
     }
 
     fn execute_bcc(&mut self, v: u8) {
@@ -502,8 +539,8 @@ impl C6502 {
 
     fn execute_bit(&mut self, v: u8) {
         let x = v & self.acc;
-        self.negative = 0b10000000 & x as bool;
-        self.overflow = 0b01000000 & x as bool;
+        self.negative = 0b10000000 & x > 0;
+        self.overflow = 0b01000000 & x > 0;
         self.zero = x == 0;
     }
 
@@ -523,8 +560,10 @@ impl C6502 {
     }
 
     fn execute_brk(&mut self) {
-        self.push_stack16(c.pc);
-        self.push_stack(self.status_register_byte(true));
+        let pc = self.pc;
+        self.push_stack16(pc);
+        let sr = self.status_register_byte(true);
+        self.push_stack(sr);
         self.pc = self.peek16(0xFFFE);
     }
 
@@ -547,7 +586,7 @@ impl C6502 {
     }
 
     fn execute_cli(&mut self) {
-        self.interrupt_disable = false;
+        self.interruptd = false;
     }
 
     fn execute_clv(&mut self) {
@@ -555,36 +594,41 @@ impl C6502 {
     }
 
     fn execute_compare(&mut self, v1: u8, v2: u8) {
-        let result = wrapping_sub(v1, v2);
-        self.carry = result >= 0;
-        self.zero = result == 0;
+        let result = v1.wrapping_sub(v2);
+        self.carry = v1 >= v2;
+        self.zero = v1 == v2;
         self.negative = is_negative(result);
     }
 
     fn execute_cmp(&mut self, v: u8) {
-        self.execute_compare(self.acc, v);
+        let a = self.acc;
+        self.execute_compare(a, v);
     }
 
     fn execute_cpx(&mut self, v: u8) {
-        self.execute_compare(self.x, v);
+        let x = self.x;
+        self.execute_compare(x, v);
     }
 
     fn execute_cpy(&mut self, v: u8) {
-        execute_compare(self.y, v);
+        let y = self.y;
+        self.execute_compare(y, v);
     }
 
-    fn execute_dec(&mut self, v: u8, ptr: Option<u16>) -> u8 {
-        let ret = wrapping_sub(*v, 1);
-        self.update_result_flags(*v);
+    fn execute_dec(&mut self, v: u8) -> u8 {
+        let ret = v.wrapping_sub(1);
+        self.update_result_flags(ret);
         return ret;
     }
 
     fn execute_dex(&mut self) {
-        self.execute_dec(c.x);
+        let x = self.x;
+        self.x = self.execute_dec(x);
     }
 
     fn execute_dey(&mut self) {
-        self.execute_dec(c.y);
+        let y = self.y;
+        self.y = self.execute_dec(y);
     }
 
     fn execute_eor(&mut self, v: u8) {
@@ -592,17 +636,20 @@ impl C6502 {
         self.update_accumulator_flags();
     }
 
-    fn execute_inc(&mut self, v: &u8) {
-        *v = wrapping_add(*v, 1);
-        self.update_result_flags(*v);
+    fn execute_inc(&mut self, v: u8) -> u8 {
+        let ret = v.wrapping_add(1);
+        self.update_result_flags(ret);
+        return ret;
     }
 
     fn execute_inx(&mut self) {
-        self.execute_inc(c.x);
+        let x = self.x;
+        self.x = self.execute_inc(x);
     }
 
     fn execute_iny(&mut self) {
-        self.execute_inc(c.y);
+        let y = self.y;
+        self.y = self.execute_inc(y);
     }
 
     fn execute_jmp(&mut self, ptr: u16) {
@@ -610,7 +657,8 @@ impl C6502 {
     }
 
     fn execute_jsr(&mut self, ptr: u16) {
-        self.push_stack(self.pc);
+        let pc = self.pc;
+        self.push_stack16(pc);
         self.pc = ptr;
     }
 
@@ -621,18 +669,19 @@ impl C6502 {
 
     fn execute_ldx(&mut self, v: u8) {
         self.x = v;
-        self.update_result_flags(self.x);
+        self.update_result_flags(v);
     }
 
     fn execute_ldy(&mut self, v: u8) {
         self.y = v;
-        self.update_result_flags(self.y);
+        self.update_result_flags(v);
     }
 
-    fn execute_lsr(&mut self, v: &u8) {
-        self.carry = v & 0b00000001 as bool;
-        v = wrapping_shr(v, 1);
+    fn execute_lsr(&mut self, v: u8) -> u8 {
+        self.carry = v & 0b00000001 > 0;
+        let ret = v.wrapping_shr(1);
         self.update_result_flags(v);
+        return ret;
     }
 
     fn execute_nop(&mut self) { }
@@ -643,11 +692,13 @@ impl C6502 {
     }
 
     fn execute_pha(&mut self) {
-        self.push_stack(self.acc);
+        let x = self.acc;
+        self.push_stack(x);
     }
 
     fn execute_php(&mut self) {
-        self.push_stack(self.status_register_byte(true));
+        let x = self.status_register_byte(true);
+        self.push_stack(x);
     }
 
     fn execute_pla(&mut self) {
@@ -656,23 +707,27 @@ impl C6502 {
     }
 
     fn execute_plp(&mut self) {
-        self.set_status_register_from_byte(self.pop_stack());
+        let x = self.pop_stack();
+        self.set_status_register_from_byte(x);
     }
 
-    fn execute_rol(&mut self, v: &u8) {
-        self.carry = v & (1 << 7) as bool;
-        v = rotate_left(v, 1);
-        self.update_result_flags(v);
+    fn execute_rol(&mut self, v: u8) -> u8 {
+        self.carry = v & 0b10000000 > 0;
+        let ret = v.rotate_left(1);
+        self.update_result_flags(ret);
+        return ret
     }
 
-    fn execute_ror(&mut self, v: &u8) {
-        self.carry = v & (1 << 0) as bool;
-        v = rotate_right(v, 1);
-        self.update_result_flags(v);
+    fn execute_ror(&mut self, v: u8) -> u8 {
+        self.carry = v & 0b00000001 > 0;
+        let ret = v.rotate_right(1);
+        self.update_result_flags(ret);
+        return ret;
     }
 
     fn execute_rti(&mut self) {
-        self.set_status_register_from_byte(self.pop_stack());
+        let x = self.pop_stack();
+        self.set_status_register_from_byte(x);
         self.pc = self.pop_stack16();
     }
 
@@ -680,9 +735,9 @@ impl C6502 {
         self.pc = self.pop_stack16();
     }
 
-    fn execute_sbc(&mut self) {
-        let (x1, o1) = overflowing_sub(self.acc, v);
-        let (x2, o2) = overflowing_sub(x1, !self.carry as u8);
+    fn execute_sbc(&mut self, v: u8) {
+        let (x1, o1) = self.acc.overflowing_sub(v);
+        let (x2, o2) = x1.overflowing_sub(!self.carry as u8);
         self.carry = o1 | o2;
         self.acc = x2;
         self.update_accumulator_flags();
@@ -700,31 +755,34 @@ impl C6502 {
         self.interruptd = true;
     }
 
-    fn execute_sta(&mut self, v: &u8) {
-        *v = self.acc;
-    }
+    // fn execute_sta(&mut self, v: u8) { //
+    //     *v = self.acc;
+    // }
 
-    fn execute_stx(&mut self, v: &u8) {
-        *v = self.x;
-    }
+    // fn execute_stx(&mut self, v: &u8) {
+    //     *v = self.x;
+    // }
 
-    fn execute_sty(&mut self, v: &u8) {
-        *v = self.y;
-    }
+    // fn execute_sty(&mut self, v: &u8) {
+    //     *v = self.y;
+    // }
 
     fn execute_tax(&mut self) {
         self.x = self.acc;
-        self.update_result_flags(self.x);
+        let x = self.x;
+        self.update_result_flags(x);
     }
 
     fn execute_tay(&mut self) {
         self.y = self.acc;
-        self.update_result_flags(self.y);
+        let y = self.y;
+        self.update_result_flags(y);
     }
 
     fn execute_tsx(&mut self) {
         self.x = self.sp;
-        self.update_result_flags(self.x);
+        let x = self.x;
+        self.update_result_flags(x);
     }
 
     fn execute_txa(&mut self) {
@@ -740,43 +798,47 @@ impl C6502 {
         self.acc = self.y;
         self.update_accumulator_flags();
     }
+    fn execute_unimplemented(&mut self, op: Operation) {
+        panic!("Unimplemented operation: {:?}", op);
+    }
 }
 // END instructions
 
 fn lea(ptr: u16, os: i16) -> u16 {
-    return wrapped_add(ptr, os as u16);
+    return ptr.wrapping_add(os as u16);
 }
 
 impl C6502 {
     fn push_stack(&mut self, v: u8) {
-        self.poke_offset(STACK_PAGE, self.sp);
-        self.sp = lea(self.sp, -1);
+        let sp = self.sp;
+        self.poke_offset(STACK_PAGE, sp as i16, v);
+        self.sp = self.sp.wrapping_sub(1);
     }
 
     fn peek_stack(&self) {
-        self.peek_offset(STACK_PAGE, lea(self.sp, 1));
+        self.peek_offset(STACK_PAGE, self.sp.wrapping_add(1) as i16);
     }
 
-    fn pop_stack(&mut self) {
-        self.sp = lea(self.sp, 1);
-        return peek_offset(STACK_PAGE, self.sp);
+    fn pop_stack(&mut self) -> u8 {
+        self.sp = self.sp.wrapping_add(1);
+        return self.peek_offset(STACK_PAGE, self.sp as i16);
     }
 
     fn push_stack16(&mut self, v: u16) {
-        self.push_stack(v & 0xFF);
-        self.push_stack(v & 0xFF00 >> 8);
+        self.push_stack((v & 0xFF) as u8);
+        self.push_stack((v & 0xFF00 >> 8) as u8);
     }
 
     fn pop_stack16(&mut self) -> u16 {
-        let msb = self.pop_stack();
-        let lsb = self.pop_stack();
+        let msb = self.pop_stack() as u16;
+        let lsb = self.pop_stack() as u16;
         return msb << 8 + lsb;
     }
 }
 
 impl AddressSpace for C6502 {
-    fn peek(&self, ptr:u16) { return self.mapper.peek(ptr); }
-    fn poke(&self, ptr:u16, v:u8) { return self.mapper.poke(ptr); }
+    fn peek(&self, ptr:u16) -> u8{ return self.mapper.peek(ptr); }
+    fn poke(&mut self, ptr:u16, v:u8) { return self.mapper.poke(ptr, v); }
 }
 
 impl C6502 {
@@ -786,31 +848,32 @@ impl C6502 {
     }
 
     fn update_accumulator_flags(&mut self) {
-        self.update_result_flags(self.acc);
+        let x = self.acc;
+        self.update_result_flags(x);
     }
 
-    fn status_register_byte(c: &Self, is_instruction: bool) -> u8 {
+    fn status_register_byte(&self, is_instruction: bool) -> u8 {
         let result =
-            (c.carry      as u8) << 0 +
-            (c.zero       as u8) << 1 +
-            (c.interruptd as u8) << 2 +
-            (c.decimal    as u8) << 3 +
-            0                    << 4 + // Break flag
-            1                    << 5 +
-            (c.overflow   as u8) << 6 +
-            (c.negative   as u8) << 7;
+            (self.carry      as u8) << 0 +
+            (self.zero       as u8) << 1 +
+            (self.interruptd as u8) << 2 +
+            (self.decimal    as u8) << 3 +
+            0                       << 4 + // Break flag
+            1                       << 5 +
+            (self.overflow   as u8) << 6 +
+            (self.negative   as u8) << 7;
         return result;
     }
 
-    fn set_status_register_from_byte(c: &mut Self, v: u8) {
-        c.carry      = v & 0b00000001 as bool;
-        c.zero       = v & 0b00000010 as bool;
-        c.interruptd = v & 0b00000100 as bool;
-        c.decimal    = v & 0b00001000 as bool;
+    fn set_status_register_from_byte(&mut self, v: u8) {
+        self.carry      = v & 0b00000001 > 0;
+        self.zero       = v & 0b00000010 > 0;
+        self.interruptd = v & 0b00000100 > 0;
+        self.decimal    = v & 0b00001000 > 0;
         // Break isn't a real register
         // Bit 5 is unused
-        c.overflow   = v & 0b01000000 as bool;
-        c.negative   = v & 0b10000000 as bool;
+        self.overflow   = v & 0b01000000 > 0;
+        self.negative   = v & 0b10000000 > 0;
     }
 }
 
