@@ -57,7 +57,7 @@ impl AddressSpace for Rom {
     fn peek(&self, ptr:u16) -> u8 {
         return self.bs[ptr as usize];
     }
-    fn poke(&mut self, ptr:u16, value:u8) {
+    fn poke(&mut self, _ptr:u16, _value:u8) {
         println!("Rom - Attempted to write read-only memory");
     }
 }
@@ -98,11 +98,10 @@ impl NullAddressSpace {
     }
 }
 impl AddressSpace for NullAddressSpace {
-    fn peek(&self, ptr:u16) -> u8{ return 0; }
-    fn poke(&mut self, ptr:u16, value:u8) { }
+    fn peek(&self, _ptr:u16) -> u8{ return 0; }
+    fn poke(&mut self, _ptr:u16, _value:u8) { }
 }
 
-type NumBytes = u16;
 type UsesOriginalAddress = bool;
 type Mapping = (u16, u16, Box<dyn AddressSpace>, UsesOriginalAddress);
 pub struct Mapper {
@@ -116,7 +115,7 @@ impl Mapper {
         }
     }
     fn lookup_address_space(&self, ptr: u16) -> (usize, u16) {
-        for ((range_begin, range_end, space, use_original_address),
+        for ((range_begin, range_end, _, use_original_address),
              space_idx) in
             self.mappings.iter()
                 .zip(0..self.mappings.len()) {

@@ -1,7 +1,8 @@
+#![allow(unused_imports)]
 #![allow(non_upper_case_globals)]
 
-use mapper::AddressSpace;
-use mapper::NullAddressSpace;
+use crate::mapper::AddressSpace;
+use crate::mapper::NullAddressSpace;
 
 // Ricoh 2A03, a variation of the 6502
 pub struct C6502 {
@@ -74,8 +75,8 @@ enum AddressingMode {
     Implicit,
 }
 
-use c6502::Operation::*;
-use c6502::AddressingMode::*;
+use Operation::*;
+use AddressingMode::*;
 
 const STACK_PAGE:u16 = 0x0100;
 
@@ -431,6 +432,7 @@ impl C6502 {
             BPL => { self.execute_bpl(v) },
             BRK => { self.execute_brk() },
             BVC => { self.execute_bvc(v) },
+            BVS => { self.execute_bvs(v) },
             CLC => { self.execute_clc() },
             CLD => { self.execute_cld() },
             CLI => { self.execute_cli() },
@@ -450,7 +452,7 @@ impl C6502 {
                      self.store_write_target(o, write_target);
             },
             INX => { self.execute_inx() },
-            INY => { self.execute_inx() },
+            INY => { self.execute_iny() },
             JMP => { self.execute_jmp(v16) },
             JSR => { self.execute_jsr(v16) },
             LDA => { self.execute_lda(v) },
@@ -825,10 +827,6 @@ impl C6502 {
 }
 // END instructions
 
-fn lea(ptr: u16, os: i16) -> u16 {
-    return ptr.wrapping_add(os as u16);
-}
-
 impl C6502 {
     fn push_stack(&mut self, v: u8) {
         let sp = self.sp;
@@ -836,9 +834,12 @@ impl C6502 {
         self.sp = self.sp.wrapping_sub(1);
     }
 
-    fn peek_stack(&self) {
-        self.peek_offset(STACK_PAGE, self.sp.wrapping_add(1) as i16);
-    }
+    // fn peek_stack(&self) -> u8{
+    //     let v = self.pop_stack();
+    //     self.push_stack(v);
+    //     return v;
+    //     //self.peek_offset(STACK_PAGE, self.sp.wrapping_add(1) as i16);
+    // }
 
     fn pop_stack(&mut self) -> u8 {
         self.sp = self.sp.wrapping_add(1);
@@ -880,7 +881,7 @@ impl C6502 {
             (self.interruptd as u8) << 2 +
             (self.decimal    as u8) << 3 +
             0                       << 4 + // Break flag
-            1                       << 5 +
+            (if is_instruction {1} else {0}) << 5 +
             (self.overflow   as u8) << 6 +
             (self.negative   as u8) << 7;
         return result;

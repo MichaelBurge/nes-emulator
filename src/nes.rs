@@ -1,32 +1,23 @@
 #![allow(unused_imports)]
 #![allow(non_camel_case_types)]
-mod common;
-mod c6502;
-mod ppu;
-mod apu;
-mod mapper;
 
-use common::*;
-use mapper::*;
-use c6502::C6502;
-use apu::Apu;
-use ppu::Ppu;
-use ppu::PpuPort;
-use ppu::PpuPort::*;
-use apu::ApuPort::*;
-use mapper::{Mapper, Ram};
+use crate::common::*;
+use crate::mapper::*;
+use crate::c6502::C6502;
+use crate::apu::Apu;
+use crate::ppu::Ppu;
+use crate::ppu::PpuPort;
+use crate::ppu::PpuPort::*;
+use crate::apu::ApuPort::*;
+use crate::mapper::{Mapper, Ram};
 
 use std::fs::File;
 use std::io::Read;
-use std::rc::Rc;
 use std::io;
 
-struct Nes {
+pub struct Nes {
     cpu: C6502,
     apu: Apu,
-    ram: [u8; 2048],
-    joystick1: Joystick,
-    joystick2: Joystick,
     ppu: Ppu,
 }
 
@@ -35,32 +26,29 @@ impl Nes {
         return Nes {
             cpu: C6502::new(),
             apu: Apu::new(),
-            ram: [0; 2048],
             ppu: Ppu::new(),
-            joystick1: Joystick::new(),
-            joystick2: Joystick::new(),
         };
     }
 }
 
-struct Joystick {
+pub struct Joystick {
 }
 
 impl Joystick {
-    fn new() -> Joystick {
+    pub fn new() -> Joystick {
         Joystick {
         }
     }
 }
 
 impl AddressSpace for Joystick {
-    fn peek(&self, ptr:u16) -> u8 {
+    fn peek(&self, _ptr:u16) -> u8 {
         return 0; // TODO - Implement joystick
     }
-    fn poke(&mut self, ptr:u16, v:u8) { }
+    fn poke(&mut self, _ptr:u16, _v:u8) { }
 }
 
-struct Ines {
+pub struct Ines {
     num_prg_chunks: u8,
     num_chr_chunks: u8,
     mapper: u8,
@@ -73,21 +61,21 @@ struct Ines {
     prg_rom: Vec<u8>,
 }
 
-fn read_ines(filename: String) -> Result<Ines, io::Error> {
+pub fn read_ines(filename: String) -> Result<Ines, io::Error> {
     // https://wiki.nesdev.com/w/index.php/INES
-    let mut file = try!(File::open(filename));
+    let mut file = File::open(filename)?;
     // Header
     let mut header:[u8;16] = [0; 16];
-    try!(file.read_exact(&mut header));
+    file.read_exact(&mut header)?;
     assert!(header[0] == 0x4e);
     assert!(header[1] == 0x45);
     assert!(header[2] == 0x53);
     assert!(header[3] == 0x1a);
     let num_prg_chunks = header[4];
     let mut prg_rom:Vec<u8> = Vec::new();
-    for i in 0 .. num_prg_chunks {
+    for _i in 0 .. num_prg_chunks {
         let mut bf:Vec<u8> = vec!(0; 16384);
-        try!(file.read_exact(&mut bf));
+        file.read_exact(&mut bf)?;
         prg_rom.append(&mut bf);
     }
     return Ok(Ines {
@@ -104,7 +92,7 @@ fn read_ines(filename: String) -> Result<Ines, io::Error> {
     });
 }
 
-fn load_ines(rom: Ines, joystick1: Box<Joystick>, joystick2: Box<Joystick>) -> Nes {
+pub fn load_ines(rom: Ines, joystick1: Box<Joystick>, joystick2: Box<Joystick>) -> Nes {
     assert!(rom.mapper == 0);
     let cartridge = Rom::new(rom.prg_rom);
     let mut ret = Nes::new();
@@ -150,7 +138,11 @@ impl AddressSpace for CpuPpuInterconnect {
 }
 
 impl Nes {
-    fn map_nes_cpu<'a>(&mut self, joystick1: Box<Joystick>, joystick2: Box<Joystick>, cartridge: Box<AddressSpace>) {
+    pub fn run_frame(&mut self, buffer: &mut [u8]) {
+        run_clocks(self, 29780);
+        self.ppu.render(buffer);
+    }
+    fn map_nes_cpu(&mut self, joystick1: Box<Joystick>, joystick2: Box<Joystick>, cartridge: Box<AddressSpace>) {
         let mut mapper:Mapper = Mapper::new();
         let cpu_ram:Ram = Ram::new(0x800);
         let cpu_ppu:CpuPpuInterconnect = CpuPpuInterconnect { ppu: &mut self.ppu as *mut Ppu };

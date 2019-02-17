@@ -1,3 +1,6 @@
+#![allow(unused_imports)]
+#![allow(non_camel_case_types)]
+
 pub enum ApuPort {
     SQ1_VOL, SQ1_SWEEP, SQ1_LO, SQ1_HI,
     SQ2_VOL, SQ2_SWEEP, SQ2_LO, SQ2_HI,
@@ -7,7 +10,7 @@ pub enum ApuPort {
     SND_CHN,
 }
 
-use apu::ApuPort::*;
+use ApuPort::*;
 
 pub fn map_apu_port(ptr: u16) -> Option<ApuPort> {
     match ptr {

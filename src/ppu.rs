@@ -1,5 +1,7 @@
-use common::*;
-use mapper::{AddressSpace, Mapper};
+#![allow(unused_imports)]
+
+use crate::common::*;
+use crate::mapper::{AddressSpace, Mapper};
 
 //use std::vec;
 
@@ -9,7 +11,6 @@ type PatternId = u8;
 type PaletteId = u8; // [0, 4)
 type TileIndex = u8;
 
-const COLOR_INVALID:u8 = 255;
 const COLOR_TRANSPARENT:u8 = 0;
 
 const ADDRESS_NAMETABLE0:u16 = 0x2000;
@@ -20,10 +21,8 @@ const ADDRESS_BACKGROUND_PALETTE0:u16 = 0x3f01;
 const ADDRESS_SPRITE_PALETTE0:u16 = 0x3f11;
 const SPRITE_HEIGHT:u8 = 8;
 const SPRITE_WIDTH:u8 = 8;
-const RENDER_WIDTH:usize = 256;
-const RENDER_HEIGHT:usize = 240;
-const RENDER_SIZE:usize = RENDER_WIDTH * RENDER_HEIGHT;
-
+pub const RENDER_WIDTH:usize = 256;
+pub const RENDER_HEIGHT:usize = 240;
 
 pub struct Ppu {
     pub data_bus: u8,
@@ -74,7 +73,7 @@ impl Ppu {
             mapper: Box::new(mapper),
         }
     }
-    pub fn render(&self, buffer: &mut [u8; RENDER_SIZE]) {
+    pub fn render(&self, buffer: &mut [u8]) {
         for y in 0..239 {
             let ptr_base:usize = 256 * (y as usize);
             self.render_scanline(y, &mut buffer[ptr_base .. ptr_base+256]);
@@ -132,7 +131,7 @@ impl Ppu {
                 PaletteType::Background => ADDRESS_BACKGROUND_PALETTE0,
             };
         let palette_size = 4;
-        let address:u16 = base_address + palette_size * (palette as u16);
+        let address:u16 = base_address + palette_size * (palette as u16) + ((color - 1) as u16);
         return self.peek(address);
     }
 

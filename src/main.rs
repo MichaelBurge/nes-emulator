@@ -1,5 +1,9 @@
 mod common;
 mod c6502;
+mod ppu;
+mod apu;
+mod mapper;
+mod nes;
 
 extern crate sdl2;
 
@@ -11,6 +15,10 @@ use sdl2::render::Canvas;
 use sdl2::surface::Surface;
 use sdl2::video::Window;
 use std::time::Duration;
+
+use crate::nes::Nes;
+use crate::nes::{load_ines, read_ines, Joystick};
+use crate::ppu::*;
 
 // https://wiki.nesdev.com/w/index.php/Cycle_reference_chart
 const CLOCKS_PER_FRAME:u32 = 29780;
@@ -24,8 +32,8 @@ fn main() {
         .unwrap();
 
     let mut canvas = window.into_canvas().build().unwrap();
-    let mut render_surface = Surface::new(RENDER_WIDTH, RENDER_HEIGHT, PixelFormatEnum::Index8).unwrap();
-    let nes = create_nes();
+    let mut render_surface = Surface::new(RENDER_WIDTH as u32, RENDER_HEIGHT as u32, PixelFormatEnum::Index8).unwrap();
+    let mut nes = create_nes();
 
     canvas.set_draw_color(Color::RGB(0, 255, 255));
     canvas.clear();
@@ -46,8 +54,8 @@ fn main() {
             }
         }
         // The rest of the game loop goes here...
-        render_frame(nes, render_surface);
-        present_frame(canvas, &render_surface);
+        render_frame(&mut nes, &mut render_surface);
+        present_frame(&mut canvas, &render_surface);
 
         canvas.present();
         ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
@@ -55,17 +63,18 @@ fn main() {
 }
 
 fn create_nes() -> Nes {
-    let rom = read_ines("roms/nestest.nes");
-    return load_ines(rom);
+    let rom = read_ines("roms/nestest.nes".to_string()).unwrap();
+    let joystick1 = Joystick::new();
+    let joystick2 = Joystick::new();
+    return load_ines(rom, Box::new(joystick1), Box::new(joystick2));
 }
 
-fn render_frame(nes: Nes, surface: Surface) {
-    run_clocks(nes, 29780);
-    let Some(buffer) = surface.without_lock_mut();
-    nes.ppu.render(buffer);
+fn render_frame(nes: &mut Nes, surface: &mut Surface) {
+    let buffer = surface.without_lock_mut().unwrap();
+    nes.run_frame(buffer);
 }
 
-fn present_frame(canvas: Canvas<Window>, surface: &Surface) {
+fn present_frame(canvas: &mut Canvas<Window>, surface: &Surface) {
     let texture_creator = canvas.texture_creator();
     let texture = texture_creator.create_texture_from_surface(surface).unwrap();
     canvas.copy(&texture, None, None);
