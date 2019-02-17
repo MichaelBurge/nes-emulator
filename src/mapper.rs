@@ -23,10 +23,16 @@ pub trait AddressSpace {
     }
 }
 
-struct Ram {
+pub struct Ram {
     bs: Vec<u8>,
 }
 
+
+impl Ram {
+    pub fn new(size:usize) -> Ram {
+        Ram { bs: vec!(0; size) }
+    }
+}
 
 impl AddressSpace for Ram {
     fn peek(&self, ptr:u16) -> u8 {
@@ -37,8 +43,14 @@ impl AddressSpace for Ram {
     }
 }
 
-struct Rom {
+pub struct Rom {
     bs: Vec<u8>,
+}
+
+impl Rom {
+    pub fn new(bs: Vec<u8>) -> Rom {
+        Rom { bs: bs }
+    }
 }
 
 impl AddressSpace for Rom {
@@ -50,7 +62,7 @@ impl AddressSpace for Rom {
     }
 }
 
-struct MirroredAddressSpace {
+pub struct MirroredAddressSpace {
     base: Box<dyn AddressSpace>,
     base_begin: u16,
     base_end: u16,
@@ -79,7 +91,12 @@ impl AddressSpace for MirroredAddressSpace {
     }
 }
 
-struct NullAddressSpace { }
+pub struct NullAddressSpace { }
+impl NullAddressSpace {
+    pub fn new() -> NullAddressSpace {
+        NullAddressSpace { }
+    }
+}
 impl AddressSpace for NullAddressSpace {
     fn peek(&self, ptr:u16) -> u8{ return 0; }
     fn poke(&mut self, ptr:u16, value:u8) { }
@@ -88,11 +105,16 @@ impl AddressSpace for NullAddressSpace {
 type NumBytes = u16;
 type UsesOriginalAddress = bool;
 type Mapping = (u16, u16, Box<dyn AddressSpace>, UsesOriginalAddress);
-struct Mapper {
+pub struct Mapper {
     mappings: Vec<Mapping>,
 }
 
 impl Mapper {
+    pub fn new() -> Mapper {
+        Mapper {
+            mappings: Vec::new(),
+        }
+    }
     fn lookup_address_space(&self, ptr: u16) -> (usize, u16) {
         for ((range_begin, range_end, space, use_original_address),
              space_idx) in
@@ -107,24 +129,24 @@ impl Mapper {
         }
         panic!("lookup_address_space - Unmapped pointer");
     }
-    fn map_address_space(&mut self, begin: u16, end: u16, space: Box<dyn AddressSpace>, use_original: bool) {
+    pub fn map_address_space(&mut self, begin: u16, end: u16, space: Box<dyn AddressSpace>, use_original: bool) {
         self.mappings.push((begin, end, space, use_original));
     }
 
-    fn map_ram(&mut self, begin: u16, end: u16) {
+    pub fn map_ram(&mut self, begin: u16, end: u16) {
         let size = end - begin;
         let space:Ram = Ram{ bs: vec![0; size as usize] };
         self.map_address_space(begin, end, Box::new(space), false);
     }
-    fn map_rom(&mut self, begin: u16, end: u16, bytes: &[u8]) {
+    pub fn map_rom(&mut self, begin: u16, end: u16, bytes: &[u8]) {
         let space:Rom = Rom{ bs: bytes.to_vec() };
         self.map_address_space(begin, end, Box::new(space), false);
     }
-    fn map_null(&mut self, begin: u16, end: u16) {
+    pub fn map_null(&mut self, begin: u16, end: u16) {
         let space:NullAddressSpace = NullAddressSpace {};
         self.map_address_space(begin, end, Box::new(space), false);
     }
-    fn map_mirrored(&mut self, begin: u16, end: u16, extended_begin: u16, extended_end: u16, space: Box<dyn AddressSpace>, use_original: bool) {
+    pub fn map_mirrored(&mut self, begin: u16, end: u16, extended_begin: u16, extended_end: u16, space: Box<dyn AddressSpace>, use_original: bool) {
         let base_begin =
             if use_original { begin } else { 0 };
         let base_end = base_begin + (end - begin);

@@ -1,8 +1,5 @@
-mod common;
-mod mapper;
-
 use common::*;
-use mapper::{AddressSpace};
+use mapper::{AddressSpace, Mapper};
 
 //use std::vec;
 
@@ -28,17 +25,18 @@ const RENDER_HEIGHT:usize = 240;
 const RENDER_SIZE:usize = RENDER_WIDTH * RENDER_HEIGHT;
 
 
-struct Ppu {
-    data_bus: u8,
-    ram: [u8; 2048 ],
-    oam: [u8; 256],
+pub struct Ppu {
+    pub data_bus: u8,
+    pub ram: [u8; 2048 ],
+    pub oam: [u8; 256],
     // Registers
-    frame_parity: bool, // Toggled every frame
-    control: u8, // PPUCTRL register
-    mapper: AddressSpace,
+    pub frame_parity: bool, // Toggled every frame
+    pub control: u8, // PPUCTRL register
+    pub mapper: Box<dyn AddressSpace>
 }
 
-enum PpuPort {
+#[derive(Copy, Clone, Debug)]
+pub enum PpuPort {
     PPUCTRL, PPUMASK, PPUSTATUS,
     OAMADDR, OAMDATA, PPUSCROLL,
     PPUADDR, PPUDATA, OAMDMA,
@@ -65,7 +63,18 @@ enum PaletteType { Sprite, Background }
 
 // https://wiki.nesdev.com/w/index.php/PPU_rendering
 impl Ppu {
-    fn render(&self, buffer: &mut [u8; RENDER_SIZE]) {
+    pub fn new() -> Ppu {
+        let mapper = Mapper::new();
+        Ppu {
+            data_bus: 0,
+            ram: [0; 2048],
+            oam: [0; 256],
+            frame_parity: false,
+            control: 0,
+            mapper: Box::new(mapper),
+        }
+    }
+    pub fn render(&self, buffer: &mut [u8; RENDER_SIZE]) {
         for y in 0..239 {
             let ptr_base:usize = 256 * (y as usize);
             self.render_scanline(y, &mut buffer[ptr_base .. ptr_base+256]);

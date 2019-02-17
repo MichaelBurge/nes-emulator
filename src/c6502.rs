@@ -1,9 +1,10 @@
 #![allow(non_upper_case_globals)]
 
 use mapper::AddressSpace;
+use mapper::NullAddressSpace;
 
 // Ricoh 2A03, a variation of the 6502
-struct C6502 {
+pub struct C6502 {
     acc: u8,
     x: u8,
     y: u8,
@@ -15,7 +16,27 @@ struct C6502 {
     decimal: bool,
     overflow: bool,
     negative: bool,
-    mapper: AddressSpace,
+    pub mapper: Box<AddressSpace>,
+}
+
+impl C6502 {
+    pub fn new() -> C6502 {
+        let mapper:NullAddressSpace = NullAddressSpace::new();
+        return C6502 {
+            acc: 0,
+            x: 0,
+            y: 0,
+            pc: 0,
+            sp: 0,
+            carry: false,
+            zero: false,
+            interruptd: false,
+            decimal: false,
+            overflow: false,
+            negative: false,
+            mapper: Box::new(mapper),
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -53,8 +74,8 @@ enum AddressingMode {
     Implicit,
 }
 
-use Operation::*;
-use AddressingMode::*;
+use c6502::Operation::*;
+use c6502::AddressingMode::*;
 
 const STACK_PAGE:u16 = 0x0100;
 
@@ -360,7 +381,7 @@ struct Instruction {
 }
 
 impl C6502 {
-    fn clock(&mut self) {
+    pub fn clock(&mut self) {
         let (i, num_bytes) = self.decode_instruction();
         self.execute_instruction(i);
         self.pc = self.pc.wrapping_add(num_bytes);
