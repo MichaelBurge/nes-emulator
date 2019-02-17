@@ -466,7 +466,11 @@ impl C6502 {
         match i.op {
             ADC => { self.execute_adc(v) },
             AND => { self.execute_and(v) },
-            ASL => { self.execute_asl(v) },
+            ASL => { let r = self.read_write_target(i.write_target);
+                     let w = self.execute_asl(r);
+                     self.store_write_target(w, i.write_target);
+                     self.update_accumulator_flags();
+            },
             BCC => { self.execute_bcc(v) },
             BCS => { self.execute_bcs(v) },
             BEQ => { self.execute_beq(v) },
@@ -505,6 +509,7 @@ impl C6502 {
             LSR => { let r = self.read_write_target(i.write_target);
                      let w = self.execute_lsr(r);
                      self.store_write_target(w, i.write_target);
+                     self.update_accumulator_flags();
             },
             NOP => { self.execute_nop() },
             ORA => { self.execute_ora(v) },
@@ -573,7 +578,8 @@ impl C6502 {
             },
             Indirect    => {
                 let addr = self.peek16(ptr);
-                (self.peek(addr) as u16, Some(addr), 2)
+                let jmp_ptr = self.peek16_pagewrap(addr);
+                (0xDEAD, Some(jmp_ptr), 2)
             },
             IndirectX   => {
                 let zp_addr = self.peek(ptr).wrapping_add(self.x);
@@ -612,11 +618,10 @@ impl C6502 {
         self.update_accumulator_flags();
     }
 
-    fn execute_asl(&mut self, v: u8) {
+    fn execute_asl(&mut self, v: u8) -> u8 {
         let (x, o) = v.overflowing_mul(2);
         self.carry = get_bit(v, 7) > 0;
-        self.acc = x;
-        self.update_accumulator_flags();
+        return x;
     }
 
     fn execute_branch(&mut self, v: u8) {
@@ -946,6 +951,13 @@ impl C6502 {
     fn peek_zero16(&self, ptr:u8) -> u16 {
         let lsb = self.peek(ptr as u16) as u16;
         let msb = self.peek(ptr.wrapping_add(1) as u16) as u16;
+        return (msb << 8) + lsb;
+    }
+    // JMP instructions do not cross a page boundary, so JMP (1FF) will access its next byte at address 0x100.
+    fn peek16_pagewrap(&self, ptr:u16) -> u16 {
+        let lsb = self.peek(ptr as u16) as u16;
+        let msb = self.peek(((ptr >> 8) << 8) +
+                            (((ptr % 256) as u8).wrapping_add(1) as u16)) as u16;
         return (msb << 8) + lsb;
     }
 }
