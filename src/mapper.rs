@@ -5,12 +5,11 @@ pub trait AddressSpace {
 
     // Helper methods
     fn peek16(&self, ptr:u16) -> u16 {
-        return
-            (
-            self.peek(ptr) +
-            self.peek(ptr.wrapping_add(1)) << 8
-            )
-            as u16;
+        let low = self.peek(ptr);
+        let high = self.peek(ptr.wrapping_add(1));
+        let result = (low as u16) + ((high as u16) << 8);
+        //eprintln!("DEBUG - PEEK16 - {:x} {:x} {:x} {:x} {:x} {:x}", high, low, result, high as u16, low as u16, (high as u16) << 8);
+        return result;
     }
     fn peek_offset(&self, ptr: u16, os: i16) -> u8 {
         return self.peek(ptr.wrapping_add(os as u16));
@@ -55,7 +54,9 @@ impl Rom {
 
 impl AddressSpace for Rom {
     fn peek(&self, ptr:u16) -> u8 {
-        return self.bs[ptr as usize];
+        let value = self.bs[ptr as usize];
+        //eprintln!("DEBUG - ROM-ACCESS - ({:?}, {:?})", ptr, value);
+        return value;
     }
     fn poke(&mut self, _ptr:u16, _value:u8) {
         println!("Rom - Attempted to write read-only memory");
@@ -74,9 +75,9 @@ impl MirroredAddressSpace {
     // If a memory range has been mirrored to another, map a pointer to the "base range" or fail if it lies outside.
     fn map_address(&self, ptr: u16) -> u16 {
         if ptr < self.extended_begin || ptr > self.extended_end {
-            panic!("map_address: Out of mapped ranged");
+            panic!("map_address: Out of mapped range ({:?} not in range [{:?}, {:?}]", ptr, self.extended_begin, self.extended_end);
         }
-        let width = self.base_end - self.base_begin;
+        let width = self.base_end - self.base_begin + 1;
         return (ptr - self.extended_begin) % width + self.base_begin;
     }
 }
@@ -114,19 +115,30 @@ impl Mapper {
             mappings: Vec::new(),
         }
     }
+    fn print_mappings(&self) {
+
+        for (range_begin, range_end, _, use_original_address) in self.mappings.iter() {
+            eprintln!("[{:x}, {:x}] - {:?}", range_begin, range_end, use_original_address);
+        }
+    }
     fn lookup_address_space(&self, ptr: u16) -> (usize, u16) {
+        let mut last_range_end = 0;
         for ((range_begin, range_end, _, use_original_address),
              space_idx) in
             self.mappings.iter()
-                .zip(0..self.mappings.len()) {
-            if ptr >= *range_begin && ptr <= *range_end {
-                let space_ptr =
-                    if *use_original_address { ptr }
+            .zip(0..self.mappings.len()) {
+                last_range_end = *range_end;
+                if ptr >= *range_begin && ptr <= *range_end {
+                    let space_ptr =
+                        if *use_original_address { ptr }
                     else { (ptr - *range_begin) };
-                return (space_idx, space_ptr);
+                    return (space_idx, space_ptr);
+                }
             }
-        }
-        panic!("lookup_address_space - Unmapped pointer");
+        eprintln!("lookup_address_space - Unmapped pointer {:?} > {:?}", ptr, last_range_end);
+        eprintln!("Mappings:");
+        self.print_mappings();
+        panic!();
     }
     pub fn map_address_space(&mut self, begin: u16, end: u16, space: Box<dyn AddressSpace>, use_original: bool) {
         self.mappings.push((begin, end, space, use_original));
@@ -154,7 +166,7 @@ impl Mapper {
                 base_begin: base_begin, base_end,
             extended_begin, extended_end,
         };
-        self.map_address_space(extended_begin, extended_end, Box::new(space), use_original);
+        self.map_address_space(extended_begin, extended_end, Box::new(space), true);
     }
 }
 
@@ -162,11 +174,35 @@ impl AddressSpace for Mapper {
     fn peek(&self, ptr:u16) -> u8{
         let (space_idx, space_ptr) = self.lookup_address_space(ptr);
         let (_, _, space, _) = &self.mappings[space_idx];
-        return space.peek(space_ptr);
+        //eprintln!("DEBUG - MEMORY-ACCESS - ({:?}, {:?})", space_idx, space_ptr);
+        let value = space.peek(space_ptr);
+        //eprintln!("DEBUG - MEMORY-ACCESS-RESULT - ({:x})", value);
+        return value;
     }
     fn poke(&mut self, ptr:u16, value:u8) {
         let (space_idx, space_ptr) = self.lookup_address_space(ptr);
         let &mut (_,_, ref mut space,_) = self.mappings.get_mut(space_idx).unwrap();
         space.poke(space_ptr, value);
+    }
+}
+
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_rom() {
+        let mut mapper = Mapper::new();
+        let bs = [1,2,3];
+        mapper.map_rom(0x1000, 0x1002, &bs);
+        assert_eq!(mapper.peek(0x1001), 2);
+    }
+    #[test]
+    fn test_mirrored() {
+        let mut mapper = Mapper::new();
+        let bs = vec!(1,2,3);
+        let rom:Rom = Rom::new(bs);
+        mapper.map_mirrored(0x1000, 0x1002, 0x5000, 0x6000, Box::new(rom), false);
+        assert_eq!(mapper.peek(0x5002), 3);
+        assert_eq!(mapper.peek(0x5005), 3);
     }
 }

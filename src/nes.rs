@@ -95,8 +95,15 @@ pub fn read_ines(filename: String) -> Result<Ines, io::Error> {
 pub fn load_ines(rom: Ines, joystick1: Box<Joystick>, joystick2: Box<Joystick>) -> Nes {
     assert!(rom.mapper == 0);
     let cartridge = Rom::new(rom.prg_rom);
+    let mut mapper:Mapper = Mapper::new();
+        match rom.num_prg_chunks {
+            1 => { mapper.map_mirrored(0x0000, 0x3FFF, 0x8000, 0xFFFF, Box::new(cartridge), true) },
+            2 => { mapper.map_mirrored(0x0000, 0x7FFF, 0x8000, 0xFFFF, Box::new(cartridge), true) },
+            _ => panic!("load_ines - Unexpected number of PRG chunks"),
+        };
     let mut ret = Nes::new();
-    ret.map_nes_cpu(joystick1, joystick2, Box::new(cartridge));
+    ret.map_nes_cpu(joystick1, joystick2, Box::new(mapper));
+    ret.map_nes_ppu();
     return ret;
 }
 struct CpuPpuInterconnect {
@@ -156,6 +163,18 @@ impl Nes {
 
         mapper.map_null(0x4018, 0x401F); // APU test mode
         mapper.map_address_space(0x4020, 0xFFFF, cartridge, true);
+        self.cpu.mapper = Box::new(mapper);
+    }
+    fn map_nes_ppu(&mut self) {
+        // https://wiki.nesdev.com/w/index.php/PPU_memory_map
+        let mut mapper:Mapper = Mapper::new();
+        let ppu_ram:Ram = Ram::new(0x800);
+        let palette_ram:Ram = Ram::new(0x20);
+        // Nametables
+        mapper.map_mirrored(0x2000, 0x27FF, 0x2000, 0x2FFF, Box::new(ppu_ram), false);
+        mapper.map_mirrored(0x3f00, 0x3f1f, 0x3f00, 0x3fff, Box::new(palette_ram), false);
+
+        self.ppu.mapper = Box::new(mapper);
     }
 }
 
