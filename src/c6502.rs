@@ -5,8 +5,8 @@ use crate::common::{run_clocks, Clocked, get_bit};
 use crate::mapper::AddressSpace;
 use crate::mapper::NullAddressSpace;
 
-// const ADDRESS_RESET:u16 = 0xFFFC;
-const ADDRESS_RESET:u16 = 0xC000;
+const ADDRESS_RESET:u16 = 0xFFFC;
+// const ADDRESS_RESET:u16 = 0xC000;
 const ADDRESS_TEST_PROGRAM:u16 = 0xC000;
 
 // Ricoh 2A03, a variation of the 6502
@@ -29,13 +29,13 @@ pub struct C6502 {
 }
 
 impl C6502 {
-    pub fn new() -> C6502 {
-        let mapper:NullAddressSpace = NullAddressSpace::new();
+    pub fn new(mapper: Box<AddressSpace>) -> C6502 {
         return C6502 {
             acc: 0,
             x: 0,
             y: 0,
-            pc: ADDRESS_RESET,
+            //pc: mapper.peek16(ADDRESS_RESET),
+            pc: ADDRESS_TEST_PROGRAM,
             sp: 0xfd,
             carry: false,
             zero: false,
@@ -43,11 +43,14 @@ impl C6502 {
             decimal: false,
             overflow: false,
             negative: false,
-            mapper: Box::new(mapper),
+            mapper: mapper,
             counter: 0,
             clocks: 0,
             is_tracing: true,
         }
+    }
+    pub fn initialize(&mut self) {
+        self.pc = self.peek16(ADDRESS_RESET);
     }
 }
 
@@ -1084,14 +1087,13 @@ mod tests {
     use crate::mapper::Ram;
 
     fn create_test_cpu(program:&Vec<u8>) -> C6502 {
-        let mut ret = C6502::new();
-        ret.is_tracing = false;
-        let mapper = Ram::new(65536);
-        ret.mapper = Box::new(mapper);
+        let mut mapper = Ram::new(65536);
         for (byte, idx) in program.iter().zip(0..65536) {
-            ret.poke(ADDRESS_TEST_PROGRAM + idx as u16, *byte)
+            mapper.poke(ADDRESS_TEST_PROGRAM + idx as u16, *byte)
         }
+        let mut ret = C6502::new(Box::new(mapper));
         ret.pc = ADDRESS_TEST_PROGRAM;
+        ret.is_tracing = false;
         return ret;
     }
 

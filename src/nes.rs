@@ -22,9 +22,9 @@ pub struct Nes {
 }
 
 impl Nes {
-    fn new() -> Nes {
+    fn new(cpu_mapper: Box<AddressSpace>) -> Nes {
         return Nes {
-            cpu: C6502::new(),
+            cpu: C6502::new(cpu_mapper),
             apu: Apu::new(),
             ppu: Ppu::new(),
         };
@@ -101,7 +101,7 @@ pub fn load_ines(rom: Ines, joystick1: Box<Joystick>, joystick2: Box<Joystick>) 
             2 => { mapper.map_mirrored(0x0000, 0x7FFF, 0x8000, 0xFFFF, Box::new(cartridge), true) },
             _ => panic!("load_ines - Unexpected number of PRG chunks"),
         };
-    let mut ret = Nes::new();
+    let mut ret = Nes::new(Box::new(NullAddressSpace::new()));
     ret.map_nes_cpu(joystick1, joystick2, Box::new(mapper));
     ret.map_nes_ppu();
     return ret;
@@ -164,6 +164,7 @@ impl Nes {
         mapper.map_null(0x4018, 0x401F); // APU test mode
         mapper.map_address_space(0x4020, 0xFFFF, cartridge, true);
         self.cpu.mapper = Box::new(mapper);
+        self.cpu.initialize();
     }
     fn map_nes_ppu(&mut self) {
         // https://wiki.nesdev.com/w/index.php/PPU_memory_map
