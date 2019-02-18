@@ -25,13 +25,36 @@ pub const RENDER_WIDTH:usize = 256;
 pub const RENDER_HEIGHT:usize = 240;
 
 pub struct Ppu {
-    pub data_bus: u8,
-    pub ram: [u8; 2048 ],
     pub oam: [u8; 256],
-    // Registers
-    pub frame_parity: bool, // Toggled every frame
-    pub control: u8, // PPUCTRL register
-    pub mapper: Box<dyn AddressSpace>
+    pub mapper: Box<dyn AddressSpace>,
+
+    base_nametable: u8,
+    vram_ptr: u16, // PPUADDR
+    vram_ptr_increment: u8,
+    sprite_pattern_table: bool, // Is the sprite pattern table the 'right' one?
+    background_pattern_table: bool, // Is the background pattern table the right one?
+    sprite_overflow: bool,
+    sprite0_hit: bool,
+    sprite_size: bool,
+    frame_parity: bool, // Toggled every frame
+    vblank_started: bool,
+    open_bus: u8, // Open bus shared by all PPU registers
+    scroll_x: u8, // PPUSCROLL
+    scroll_y: u8,
+    address_latch_set: bool,
+    ppu_master_select: bool,
+    generate_vblank_nmi: bool,
+
+    is_greyscale: bool,
+    show_leftmost_background: bool,
+    show_leftmost_sprite: bool,
+    show_background: bool,
+    show_sprites: bool,
+    emphasize_red: bool,
+    emphasize_green: bool,
+    emphasize_blue: bool,
+
+    oam_ptr: u8,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -57,6 +80,63 @@ struct Sprite {
     flip_vertical: bool,
 }
 
+pub struct CpuPpuInterconnect {
+    ppu: *mut Ppu,
+}
+
+impl CpuPpuInterconnect {
+    pub fn new(ppu: &mut Ppu) -> CpuPpuInterconnect {
+        CpuPpuInterconnect { ppu: ppu as &mut Ppu }
+    }
+}
+
+use PpuPort::*;
+
+pub fn map_ppu_port(ptr: u16) -> Option<PpuPort> {
+    match ptr {
+        0x2000 => Some(PPUCTRL),
+        0x2001 => Some(PPUMASK),
+        0x2002 => Some(PPUSTATUS),
+        0x2003 => Some(OAMADDR),
+        0x2004 => Some(OAMDATA),
+        0x2005 => Some(PPUSCROLL),
+        0x2006 => Some(PPUADDR),
+        0x2007 => Some(PPUDATA),
+        0x4014 => Some(OAMDMA),
+        _      => None
+    }
+}
+
+impl AddressSpace for CpuPpuInterconnect {
+    fn peek(&self, ptr:u16) -> u8 {
+        let ppu:&mut Ppu = unsafe { &mut *self.ppu };
+        match map_ppu_port(ptr) {
+            Some(PPUCTRL) => ppu.open_bus,
+            Some(PPUMASK) => ppu.open_bus,
+            Some(PPUSTATUS) => ppu.read_status(),
+            Some(OAMADDR) => ppu.open_bus,
+            Some(OAMDATA) => ppu.read_oam_data(),
+            Some(PPUSCROLL) => ppu.open_bus,
+            Some(PPUADDR) => ppu.open_bus,
+            Some(PPUDATA) => ppu.read_data(),
+            port => panic!("Unimplemented PPU Port {:?}", port),
+        }
+    }
+    fn poke(&mut self, ptr:u16, value:u8) {
+        let ppu:&mut Ppu = unsafe { &mut *self.ppu };
+        ppu.open_bus = value;
+        match map_ppu_port(ptr) {
+            Some(PPUCTRL) => ppu.write_control(value),
+            Some(PPUMASK) => ppu.write_mask(value),
+            Some(PPUSTATUS) => {},
+            Some(OAMADDR) => ppu.write_oam_address(value),
+            Some(OAMDATA) => ppu.write_oam_data(value),
+            Some(PPUSCROLL) => ppu.write_scroll(value),
+            Some(PPUDATA) => ppu.write_data(value),
+            port => panic!("Unimplemented PPU Port {:?}", port),
+        }
+    }
+}
 #[derive(Copy, Clone)]
 enum PaletteType { Sprite, Background }
 
@@ -65,12 +145,36 @@ impl Ppu {
     pub fn new() -> Ppu {
         let mapper = Mapper::new();
         Ppu {
-            data_bus: 0,
-            ram: [0; 2048],
             oam: [0; 256],
-            frame_parity: false,
-            control: 0,
             mapper: Box::new(mapper),
+
+            base_nametable: 0,
+            vram_ptr: 0,
+            vram_ptr_increment: 1,
+            sprite_pattern_table: false,
+            background_pattern_table: false,
+            sprite_overflow: false,
+            sprite0_hit: false,
+            sprite_size: false,
+            frame_parity: false,
+            vblank_started: false,
+            open_bus: 0,
+            scroll_x: 0,
+            scroll_y: 0,
+            address_latch_set: false,
+            ppu_master_select: false,
+            generate_vblank_nmi: false,
+
+            is_greyscale: false,
+            show_leftmost_background: false,
+            show_leftmost_sprite: false,
+            show_background: false,
+            show_sprites: false,
+            emphasize_red: false,
+            emphasize_green: false,
+            emphasize_blue: false,
+
+            oam_ptr: 0,
         }
     }
     pub fn render(&self, buffer: &mut [u8]) {
@@ -141,8 +245,8 @@ impl Ppu {
         let size_pattern_table = 0x1000;
         let size_tile = 16;
         let is_pattern_table_right = match palette_type {
-            PaletteType::Sprite => self.is_sprite_pattern_table_right(),
-            PaletteType::Background => self.is_background_pattern_table_right(),
+            PaletteType::Sprite => self.sprite_pattern_table,
+            PaletteType::Background => self.background_pattern_table,
         };
         let ptr_tile:u16 =
             ptr_pattern_table_base +
@@ -234,10 +338,75 @@ impl Ppu {
         return palette_id;
     }
 
-    fn is_sprite_pattern_table_right(&self) -> bool {
-        return get_bit(self.control, 3) > 0;
+    pub fn write_control(&mut self, v:u8) {
+        self.base_nametable = v & 0b11;
+        self.vram_ptr_increment = ternary(get_bit(v, 2) > 0, 32, 1);
+        self.sprite_pattern_table = get_bit(v, 3)>0;
+        self.background_pattern_table = get_bit(v,4)>0;
+        self.sprite_size = get_bit(v,5)>0;
+        self.ppu_master_select = get_bit(v,6)>0;
+        self.generate_vblank_nmi = get_bit(v,6)>0;
     }
-    fn is_background_pattern_table_right(&self) -> bool {
-        return get_bit(self.control, 4) > 0;
+    pub fn write_mask(&mut self, v:u8) {
+        self.is_greyscale = get_bit(v,0)>0;
+        self.show_leftmost_background = get_bit(v,1)>0;
+        self.show_leftmost_sprite = get_bit(v,2)>0;
+        self.show_background = get_bit(v,3)>0;
+        self.show_sprites = get_bit(v,4)>0;
+        self.emphasize_red = get_bit(v,5)>0;
+        self.emphasize_green = get_bit(v,6)>0;
+        self.emphasize_blue = get_bit(v,7)>0;
+    }
+
+    pub fn read_status(&mut self) -> u8 {
+        let ret =
+            (self.open_bus & 0b00011111) |
+            ((self.sprite_overflow as u8) << 5) |
+            ((self.sprite0_hit as u8) << 6) |
+            ((self.vblank_started as u8) << 7)
+            ;
+        self.vblank_started = false;
+        self.address_latch_set = false;
+        return ret;
+    }
+    pub fn write_oam_address(&mut self, v:u8) {
+        self.oam_ptr = v;
+    }
+    pub fn read_oam_data(&mut self) -> u8 {
+        let ptr:u8 = self.oam_ptr;
+        return self.oam[ptr as usize];
+    }
+    pub fn write_oam_data(&mut self, v:u8) {
+        let ptr:u8 = self.oam_ptr;
+        self.oam[ptr as usize] = v;
+        self.oam_ptr = self.oam_ptr.wrapping_add(1);
+    }
+    pub fn write_scroll(&mut self, v:u8) {
+        if self.address_latch_set {
+            self.scroll_y = v;
+        } else {
+            self.scroll_x = v;
+        }
+        self.address_latch_set = true;
+    }
+    pub fn write_address(&mut self, v:u8) {
+        if self.address_latch_set {
+            self.vram_ptr &= 0xff00;
+            self.vram_ptr |= (v as u16) << 8;
+        } else {
+            self.vram_ptr &= 0x00ff;
+            self.vram_ptr |= (v as u16) << 0;
+        }
+        self.address_latch_set = true;
+    }
+    pub fn read_data(&mut self) -> u8 {
+        let ptr = self.vram_ptr;
+        return self.peek(ptr);
+    }
+    pub fn write_data(&mut self, v:u8) {
+        let ptr = self.vram_ptr;
+        self.poke(ptr, v);
+        let increment = self.vram_ptr_increment;
+        self.vram_ptr = self.vram_ptr.wrapping_add(increment as u16);
     }
 }

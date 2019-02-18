@@ -11,3 +11,7 @@ pub fn run_clocks(x: &mut Clocked, num_clocks: u32) {
         x.clock();
     }
 }
+
+pub fn ternary<T>(cond:bool, on_true:T, on_false:T) -> T {
+    if cond { on_true } else { on_false }
+}

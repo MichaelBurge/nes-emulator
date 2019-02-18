@@ -187,7 +187,7 @@ impl AddressSpace for Mapper {
 }
 
 mod tests {
-    use super::*;
+    // use super::*;
 
     #[test]
     fn test_rom() {

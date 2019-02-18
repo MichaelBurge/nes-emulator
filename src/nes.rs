@@ -6,6 +6,7 @@ use crate::mapper::*;
 use crate::c6502::C6502;
 use crate::apu::Apu;
 use crate::ppu::Ppu;
+use crate::ppu::CpuPpuInterconnect;
 use crate::ppu::PpuPort;
 use crate::ppu::PpuPort::*;
 use crate::apu::ApuPort::*;
@@ -106,43 +107,6 @@ pub fn load_ines(rom: Ines, joystick1: Box<Joystick>, joystick2: Box<Joystick>) 
     ret.map_nes_ppu();
     return ret;
 }
-struct CpuPpuInterconnect {
-    ppu: *mut Ppu,
-}
-
-fn map_ppu_port(ptr: u16) -> Option<PpuPort> {
-    match ptr {
-        0x2000 => Some(PPUCTRL),
-        0x2001 => Some(PPUMASK),
-        0x2002 => Some(PPUSTATUS),
-        0x2003 => Some(OAMADDR),
-        0x2004 => Some(OAMDATA),
-        0x2005 => Some(PPUSCROLL),
-        0x2006 => Some(PPUADDR),
-        0x2007 => Some(PPUDATA),
-        0x4014 => Some(OAMDMA),
-        _      => None
-    }
-}
-
-impl AddressSpace for CpuPpuInterconnect {
-    fn peek(&self, ptr:u16) -> u8 {
-        unsafe {
-            match map_ppu_port(ptr) {
-                Some(PPUCTRL) => (*self.ppu).control,
-                port => panic!("Unimplemented PPU Port {:?}", port),
-            }
-        }
-    }
-    fn poke(&mut self, ptr:u16, value:u8) {
-        unsafe {
-            match map_ppu_port(ptr) {
-                Some(PPUCTRL) => (*self.ppu).control = value,
-                port => panic!("Unimplemented PPU Port {:?}", port),
-            }
-        }
-    }
-}
 
 impl Nes {
     pub fn run_frame(&mut self, buffer: &mut [u8]) {
@@ -152,7 +116,7 @@ impl Nes {
     fn map_nes_cpu(&mut self, joystick1: Box<Joystick>, joystick2: Box<Joystick>, cartridge: Box<AddressSpace>) {
         let mut mapper:Mapper = Mapper::new();
         let cpu_ram:Ram = Ram::new(0x800);
-        let cpu_ppu:CpuPpuInterconnect = CpuPpuInterconnect { ppu: &mut self.ppu as *mut Ppu };
+        let cpu_ppu:CpuPpuInterconnect = CpuPpuInterconnect::new(&mut self.ppu);
         // https://wiki.nesdev.com/w/index.php/CPU_memory_map
         mapper.map_mirrored(0x0000, 0x07ff, 0x0000, 0x1fff, Box::new(cpu_ram), false);
         mapper.map_mirrored(0x2000, 0x2007, 0x2000, 0x3fff, Box::new(cpu_ppu), true);
