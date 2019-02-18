@@ -425,10 +425,10 @@ impl C6502 {
         let ptr = self.pc;
         let bytes:u32 = match num_bytes {
             1 => self.peek(ptr) as u32,
-            2 => ((self.peek(ptr) as u32)                 << 8) +
+            2 => ((self.peek(ptr) as u32)                 << 8) |
                  ((self.peek(ptr.wrapping_add(1)) as u32) << 0),
-            3 => ((self.peek(ptr) as u32)                 << 16) +
-                 ((self.peek(ptr.wrapping_add(1)) as u32) << 8) +
+            3 => ((self.peek(ptr) as u32)                 << 16) |
+                 ((self.peek(ptr.wrapping_add(1)) as u32) << 8) |
                  ((self.peek(ptr.wrapping_add(2)) as u32) << 0),
             _ => panic!("print_trace_line - Unexpected num_bytes {:?} {:?}", num_bytes, i),
         };
@@ -526,7 +526,7 @@ impl C6502 {
                      self.store_write_target(w, i.write_target); },
             RTI => { self.execute_rti() },
             RTS => { self.execute_rts() },
-            SBC => { self.execute_sbc(v) },
+            SBC => { self.execute_sbc(v); },
             SEC => { self.execute_sec() },
             SED => { self.execute_sed() },
             SEI => { self.execute_sei() },
@@ -543,6 +543,29 @@ impl C6502 {
             TXS => { self.execute_txs() },
             TYA => { self.execute_tya() },
             KIL => { panic!("KIL instruction encountered") },
+
+            LAX => { self.execute_lax(v) },
+            SAX => { let r = self.read_write_target(i.write_target);
+                     let w = self.execute_sax(r);
+                     self.store_write_target(w, i.write_target);},
+            DCP => { let r = self.read_write_target(i.write_target);
+                     let w = self.execute_dcp(r);
+                     self.store_write_target(w, i.write_target);},
+            ISC => { let r = self.read_write_target(i.write_target);
+                     let w = self.execute_isc(r);
+                     self.store_write_target(w, i.write_target);},
+            RLA => { let r = self.read_write_target(i.write_target);
+                     let w = self.execute_rla(r);
+                     self.store_write_target(w, i.write_target);},
+            RRA => { let r = self.read_write_target(i.write_target);
+                     let w = self.execute_rra(r);
+                     self.store_write_target(w, i.write_target);},
+            SLO => { let r = self.read_write_target(i.write_target);
+                     let w = self.execute_slo(r);
+                     self.store_write_target(w, i.write_target);},
+            SRE => { let r = self.read_write_target(i.write_target);
+                     let w = self.execute_sre(r);
+                     self.store_write_target(w, i.write_target);},
             _ => { self.execute_unimplemented(i.op) },
         }
     }
@@ -569,12 +592,12 @@ impl C6502 {
                 (self.peek(addr) as u16, Some(addr), 2)
             },
             AbsoluteX   => {
-                let addr = ptr + (self.x as u16);
-                (self.peek(addr) as u16, Some(addr), 1)
+                let addr = self.peek16(ptr).wrapping_add(self.x as u16);
+                (self.peek(addr) as u16, Some(addr), 2)
             },
             AbsoluteY   => {
-                let addr = ptr + (self.y as u16);
-                (self.peek(addr) as u16, Some(addr), 1)
+                let addr = self.peek16(ptr).wrapping_add(self.y as u16);
+                (self.peek(addr) as u16, Some(addr), 2)
             },
             Indirect    => {
                 let addr = self.peek16(ptr);
@@ -625,7 +648,7 @@ impl C6502 {
     }
 
     fn execute_branch(&mut self, v: u8) {
-        self.pc += (v as i8) as u16;
+        self.pc = self.pc.wrapping_add((v as i8) as u16);
     }
 
     fn execute_bcc(&mut self, v: u8) {
@@ -822,8 +845,9 @@ impl C6502 {
     }
 
     fn execute_rol(&mut self, v: u8) -> u8 {
+        let old_carry = self.carry as u8;
         self.carry = v & 0b10000000 > 0;
-        let ret = v.rotate_left(1);
+        let ret = (v << 1) | old_carry;
         self.update_result_flags(ret);
         return ret
     }
@@ -913,6 +937,46 @@ impl C6502 {
         self.acc = self.y;
         self.update_accumulator_flags();
     }
+    fn execute_lax(&mut self, v:u8) {
+        self.acc = v;
+        self.x = v;
+        self.update_accumulator_flags();
+    }
+    fn execute_sax(&mut self, v:u8) -> u8 {
+        return self.acc & self.x;
+    }
+    fn execute_dcp(&mut self, v:u8) -> u8 {
+        let ret = self.execute_dec(v);
+        self.execute_cmp(ret);
+        return ret;
+    }
+    fn execute_isc(&mut self, v:u8) -> u8 {
+        let x = self.execute_inc(v);
+        self.execute_sbc(x);
+        return x;
+    }
+    fn execute_rla(&mut self, v:u8) -> u8 {
+        let x = self.execute_rol(v);
+        self.execute_and(x);
+        eprintln!("DEBUG - RLA - {} {} {}", v, x, self.acc);
+        return x;
+    }
+    fn execute_rra(&mut self, v:u8) -> u8 {
+        let x = self.execute_ror(v);
+        self.execute_adc(x);
+        return x;
+    }
+    fn execute_slo(&mut self, v:u8) -> u8 {
+        let x = self.execute_asl(v);
+        self.execute_ora(x);
+        return x;
+    }
+    fn execute_sre(&mut self, v:u8) -> u8 {
+        let x = self.execute_lsr(v);
+        self.execute_eor(x);
+        return x;
+    }
+
     fn execute_unimplemented(&mut self, op: Operation) {
         panic!("Unimplemented operation: {:?}", op);
     }
@@ -946,19 +1010,19 @@ impl C6502 {
     fn pop_stack16(&mut self) -> u16 {
         let lsb = self.pop_stack() as u16;
         let msb = self.pop_stack() as u16;
-        return (msb << 8) + lsb;
+        return (msb << 8) | lsb;
     }
     fn peek_zero16(&self, ptr:u8) -> u16 {
         let lsb = self.peek(ptr as u16) as u16;
         let msb = self.peek(ptr.wrapping_add(1) as u16) as u16;
-        return (msb << 8) + lsb;
+        return (msb << 8) | lsb;
     }
     // JMP instructions do not cross a page boundary, so JMP (1FF) will access its next byte at address 0x100.
     fn peek16_pagewrap(&self, ptr:u16) -> u16 {
         let lsb = self.peek(ptr as u16) as u16;
-        let msb = self.peek(((ptr >> 8) << 8) +
+        let msb = self.peek(((ptr >> 8) << 8) |
                             (((ptr % 256) as u8).wrapping_add(1) as u16)) as u16;
-        return (msb << 8) + lsb;
+        return (msb << 8) | lsb;
     }
 }
 
@@ -987,13 +1051,13 @@ impl C6502 {
 
     fn status_register_byte(&self, is_instruction: bool) -> u8 {
         let result =
-            ((self.carry      as u8) << 0) +
-            ((self.zero       as u8) << 1) +
-            ((self.interruptd as u8) << 2) +
-            ((self.decimal    as u8) << 3) +
-            (0                       << 4) + // Break flag
-            ((if is_instruction {1} else {0}) << 5) +
-            ((self.overflow   as u8) << 6) +
+            ((self.carry      as u8) << 0) |
+            ((self.zero       as u8) << 1) |
+            ((self.interruptd as u8) << 2) |
+            ((self.decimal    as u8) << 3) |
+            (0                       << 4) | // Break flag
+            ((if is_instruction {1} else {0}) << 5) |
+            ((self.overflow   as u8) << 6) |
             ((self.negative   as u8) << 7);
         return result;
     }
