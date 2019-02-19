@@ -2,10 +2,11 @@
 
 use crate::common::*;
 use crate::mapper::{AddressSpace, Mapper};
+use std::mem::transmute;
 
 //use std::vec;
 
-type SystemColor = u8; // [0,64)
+pub type SystemColor = u8; // [0,64)
 type PatternColor = u8; // [0,4)
 type PatternId = u8;
 type PaletteId = u8; // [0, 4)
@@ -23,8 +24,10 @@ const SPRITE_HEIGHT:u8 = 8;
 const SPRITE_WIDTH:u8 = 8;
 pub const RENDER_WIDTH:usize = 256;
 pub const RENDER_HEIGHT:usize = 240;
+pub const RENDER_SIZE:usize = RENDER_WIDTH * RENDER_HEIGHT * 3;
 
 pub struct Ppu {
+    pub display: [u8; RENDER_SIZE],
     pub oam: [u8; 256],
     pub mapper: Box<dyn AddressSpace>,
 
@@ -37,7 +40,7 @@ pub struct Ppu {
     sprite0_hit: bool,
     sprite_size: bool,
     frame_parity: bool, // Toggled every frame
-    vblank_started: bool,
+    vblank: bool,
     open_bus: u8, // Open bus shared by all PPU registers
     scroll_x: u8, // PPUSCROLL
     scroll_y: u8,
@@ -55,6 +58,19 @@ pub struct Ppu {
     emphasize_blue: bool,
 
     oam_ptr: u8,
+
+    // Lift state in the render loop to PPU-level registers to allow running a render clock-by-clock.
+    /* clocks_to_pause causes the PPU to do nothing for X clocks. This should be unnecessary in a
+       clock-accurate emulation. However, this emulator may choose to "batch" the actions of many clocks
+       all at once, and fill the remaining clocks with do-nothing operations. */
+    clocks_to_pause: u16,
+    scanline: u16,
+    next_tile_reg: u8,
+    next_tile_reg2: u8,
+    next_pixel_reg: u8,
+    next_pixel_reg2: u8,
+    next_tile_attributes_reg: u8,
+    next_tile_attributes_reg2: u8,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -86,7 +102,7 @@ pub struct CpuPpuInterconnect {
 
 impl CpuPpuInterconnect {
     pub fn new(ppu: &mut Ppu) -> CpuPpuInterconnect {
-        CpuPpuInterconnect { ppu: ppu as &mut Ppu }
+        CpuPpuInterconnect { ppu: ppu }
     }
 }
 
@@ -132,6 +148,7 @@ impl AddressSpace for CpuPpuInterconnect {
             Some(OAMADDR) => ppu.write_oam_address(value),
             Some(OAMDATA) => ppu.write_oam_data(value),
             Some(PPUSCROLL) => ppu.write_scroll(value),
+            Some(PPUADDR) => ppu.write_address(value),
             Some(PPUDATA) => ppu.write_data(value),
             port => panic!("Unimplemented PPU Port {:?}", port),
         }
@@ -140,11 +157,46 @@ impl AddressSpace for CpuPpuInterconnect {
 #[derive(Copy, Clone)]
 enum PaletteType { Sprite, Background }
 
+const SCANLINE_PRERENDER:u16 = 261;
+const SCANLINE_RENDER:u16 = 0;
+const SCANLINE_POSTRENDER:u16 = 240;
+const SCANLINE_VBLANK:u16 = 241;
+
+impl Clocked for Ppu {
+    fn clock(&mut self) {
+        // https://wiki.nesdev.com/w/index.php/PPU_rendering
+        if self.clocks_to_pause > 0 {
+            self.clocks_to_pause -= 1;
+            return;
+        }
+        let scanline = self.scanline;
+        if scanline == 261 {
+            self.render_scanline_prerender();
+        } else if scanline < SCANLINE_POSTRENDER {
+            let mut buf = [0;256];
+            self.render_scanline(scanline as u8, &mut buf);
+            let ptr_base = 256 * (scanline as usize);
+            self.clocks_to_pause = 341;
+        } else if scanline == SCANLINE_POSTRENDER {
+            self.render_scanline_postrender();
+            self.clocks_to_pause = 341;
+        } else {
+            self.render_scanline_vblank();
+            self.clocks_to_pause = 341;
+        }
+        self.scanline += 1;
+        if self.scanline > SCANLINE_PRERENDER {
+            self.scanline = 0;
+        }
+    }
+}
+
 // https://wiki.nesdev.com/w/index.php/PPU_rendering
 impl Ppu {
     pub fn new() -> Ppu {
         let mapper = Mapper::new();
         Ppu {
+            display: [0; RENDER_SIZE],
             oam: [0; 256],
             mapper: Box::new(mapper),
 
@@ -157,7 +209,7 @@ impl Ppu {
             sprite0_hit: false,
             sprite_size: false,
             frame_parity: false,
-            vblank_started: false,
+            vblank: false,
             open_bus: 0,
             scroll_x: 0,
             scroll_y: 0,
@@ -175,17 +227,46 @@ impl Ppu {
             emphasize_blue: false,
 
             oam_ptr: 0,
-        }
-    }
-    pub fn render(&self, buffer: &mut [u8]) {
-        for y in 0..239 {
-            let ptr_base:usize = 256 * (y as usize);
-            self.render_scanline(y, &mut buffer[ptr_base .. ptr_base+256]);
+
+            clocks_to_pause: 0,
+            scanline: 0,
+            next_tile_reg: 0,
+            next_tile_reg2: 0,
+            next_pixel_reg: 0,
+            next_pixel_reg2: 0,
+            next_tile_attributes_reg: 0,
+            next_tile_attributes_reg2: 0,
         }
     }
 
+    pub fn render(&self, buf: &mut [u8]) {
+        buf.copy_from_slice(&self.display[0..RENDER_SIZE]);
+    }
+
+    pub fn render_scanline_prerender(&mut self) {
+        if self.is_rendering_enabled() {
+            self.clocks_to_pause = ternary(self.frame_parity, 341, 340)-1;
+            // TODO - "During pixels 280 through 304 of this scanline, the vertical scroll bits are reloaded if rendering is enabled. "
+            // TODO - Make memory accesses that a regular scanline would
+        } else {
+            self.clocks_to_pause = 341;
+        }
+    }
+
+    pub fn render_scanline_vblank(&mut self) {
+        if self.scanline == 241 {
+            eprintln!("DEBUG - VBLANK HIT");
+            self.set_vblank(true);
+            // TODO - vblank NMI
+        }
+    }
+
+    pub fn render_scanline_postrender(&mut self) {
+    }
+
     // https://wiki.nesdev.com/w/index.php/PPU_sprite_priority
-    fn render_scanline(&self, y: u8, b: &mut [u8]) {
+    fn render_scanline(&mut self, y: u8, buf: &mut[u8]) {
+        let ptr_base = 256 * (y as usize);
         let global_background_color = self.lookup_global_background_color();
         // Each PPU clock cycle produces one pixel. The HBlank period is used to perform memory accesses.
         let sprites = self.fetch_scanline_sprites(y);
@@ -196,7 +277,7 @@ impl Ppu {
 
             let (is_sprite_front, sprite_color) =
                 match self.find_matching_sprite(x, &sprites) {
-                    None => (false, COLOR_TRANSPARENT),
+                    None => (false, None),
                     Some(sprite) => {
                         // TODO: Horizontal/vertical flipping
                         let xsub = (x.wrapping_sub(sprite.x)) % 8;
@@ -207,24 +288,24 @@ impl Ppu {
                     },
                 };
 
-            let is_sprite_opaque = sprite_color != COLOR_TRANSPARENT;
-            let is_background_opaque = background_color != COLOR_TRANSPARENT;
-            if is_sprite_front && is_sprite_opaque {
-                b[x as usize] = sprite_color;
-            } else if is_background_opaque {
-                b[x as usize] = background_color;
-            } else if is_sprite_opaque {
-                b[x as usize] = sprite_color;
+            if is_sprite_front && sprite_color.is_some() {
+                self.write_system_pixel(x, y, sprite_color.unwrap());
+            } else if background_color.is_some() {
+                self.write_system_pixel(x, y, background_color.unwrap());
+                buf[x as usize] = background_color.unwrap();
+            } else if sprite_color.is_some() {
+                self.write_system_pixel(x, y, sprite_color.unwrap());
             } else {
-                b[x as usize] = global_background_color;
+                self.write_system_pixel(x, y, global_background_color);
             }
         }
     }
 
-    fn render_pattern_subpixel(&self, tile_index: u8, palette_type: PaletteType, palette: u8, xsub: u8, ysub: u8) -> SystemColor {
+    fn render_pattern_subpixel(&self, tile_index: u8, palette_type: PaletteType, palette: u8, xsub: u8, ysub: u8) -> Option<SystemColor> {
         let color = self.lookup_pattern_color(palette_type, tile_index, xsub, ysub);
+        if color == COLOR_TRANSPARENT { return None; }
         let system_color = self.lookup_palette(palette, palette_type, color);
-        return system_color;
+        return Some(system_color);
     }
 
     fn lookup_palette(&self, palette: u8, palette_type: PaletteType, color: u8) -> SystemColor {
@@ -363,9 +444,9 @@ impl Ppu {
             (self.open_bus & 0b00011111) |
             ((self.sprite_overflow as u8) << 5) |
             ((self.sprite0_hit as u8) << 6) |
-            ((self.vblank_started as u8) << 7)
+            ((self.vblank as u8) << 7)
             ;
-        self.vblank_started = false;
+        self.set_vblank(false);
         self.address_latch_set = false;
         return ret;
     }
@@ -409,4 +490,109 @@ impl Ppu {
         let increment = self.vram_ptr_increment;
         self.vram_ptr = self.vram_ptr.wrapping_add(increment as u16);
     }
+    pub fn is_rendering_complete(&self) -> bool {
+        return self.scanline >= 240;
+    }
+    pub fn is_rendering_enabled(&self) -> bool {
+        return self.show_background || self.show_sprites;
+    }
+    fn lookup_system_pixel(&self, i: SystemColor) -> RgbColor {
+        return SYSTEM_PALETTE[i as usize];
+    }
+    fn write_system_pixel(&mut self, x: u8, y: u8, c: SystemColor) {
+        // c = 22;
+        let (r,g,b) = self.lookup_system_pixel(c);
+        let xz = x as usize;
+        let yz = y as usize;
+        let i1 = xz+(256*yz)+0;
+        let i2 = xz+(256*yz)+1;
+        let i3 = xz+(256*yz)+2;
+        // eprintln!("DEBUG - ({} {}) ({} {}) ({} {})", i1, r, i2, g, i3, b);
+        self.display[i1] = r;
+        self.display[i2] = g;
+        self.display[i3] = b;
+    }
+    fn set_vblank(&mut self, new_vblank: bool) {
+        let vblank = self.vblank;
+        if vblank != new_vblank {
+            eprintln!("DEBUG - VBLANK CHANGED FROM {:?} TO {:?}", vblank, new_vblank);
+        }
+        self.vblank = new_vblank;
+    }
 }
+
+type RgbColor = (u8, u8, u8);
+type SystemPalette = [RgbColor; 64];
+
+// The NES can refer to 64 separate colors. This table has RGB values for each.
+pub const SYSTEM_PALETTE:SystemPalette =
+    [
+        // 0x
+        (124, 124, 124), // x0
+        (0,   0,   252), // x1
+        (0,   0,   188), // x2
+        (68,  40,  188), // x3
+        (148, 0,   132), // x4
+        (168, 0,   32),  // x5
+        (168, 16,  0),   // x6
+        (136, 20,  0),   // x7
+        (80,  48,  0),   // x8
+        (0,   120, 0),   // x9
+        (0,   104, 0),   // xA
+        (0,   88,  0),   // xB
+        (0,   64,  88),  // xC
+        (0,   0,   0),   // xD
+        (0,   0,   0),   // xE
+        (0,   0,   0),   // xF
+        // 1x
+        (188, 188, 188), // x0
+        (0,   120, 248), // x1
+        (0,   88,  248), // x2
+        (104, 68,  252), // x3
+        (216, 0,   204), // x4
+        (228, 0,   88),  // x5
+        (248, 56,  0),   // x6
+        (228, 92,  16),  // x7
+        (172, 124, 0),   // x8
+        (0,   184, 0),   // x9
+        (0,   168, 0),   // xA
+        (0,   168, 68),  // xB
+        (0,   136, 136), // xC
+        (0,   0,   0),   // xD
+        (0,   0,   0),   // xE
+        (0,   0,   0),   // xF
+        // 2x
+        (248, 248, 248), // x0
+        (60,  188, 252), // x1
+        (104, 136, 252), // x2
+        (152, 120, 248), // x3
+        (248, 120, 248), // x4
+        (248, 88,  152), // x5
+        (248, 120, 88),  // x6
+        (252, 160, 68),  // x7
+        (248, 184, 0),   // x8
+        (184, 248, 24),  // x9
+        (88,  216, 84),  // xA
+        (88,  248, 152), // xB
+        (0,   232, 216), // xC
+        (120, 120, 120), // xD
+        (0,   0,   0),   // xE
+        (0,   0,   0),   // xF
+        // 3x
+        (252, 252, 252), // x0
+        (164, 228, 252), // x1
+        (184, 184, 248), // x2
+        (216, 184, 248), // x3
+        (248, 184, 248), // x4
+        (248, 164, 192), // x5
+        (240, 208, 176), // x6
+        (252, 224, 168), // x7
+        (248, 216, 120), // x8
+        (216, 248, 120), // x9
+        (184, 248, 184), // xA
+        (184, 248, 216), // xB
+        (0,   252, 252), // xC
+        (216, 216, 216), // xD
+        (0,   0,   0),   // xE
+        (0,   0,   0),   // xF
+    ];

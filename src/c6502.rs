@@ -46,7 +46,7 @@ impl C6502 {
             mapper: mapper,
             counter: 0,
             clocks: 0,
-            is_tracing: true,
+            is_tracing: false,
         }
     }
     pub fn initialize(&mut self) {
@@ -417,7 +417,6 @@ impl Clocked for C6502 {
         let (i, num_bytes) = self.decode_instruction();
         if self.is_tracing
         { self.print_trace_line(num_bytes, &i); }
-        //eprintln!("DEBUG - Instruction - {:x} {:?}({:?} bytes)", ptr, i, num_bytes);
         self.pc = self.pc.wrapping_add(num_bytes);
         self.execute_instruction(i);
     }
@@ -548,8 +547,8 @@ impl C6502 {
             KIL => { panic!("KIL instruction encountered") },
 
             LAX => { self.execute_lax(v) },
-            SAX => { let r = self.read_write_target(i.write_target);
-                     let w = self.execute_sax(r);
+            SAX => { let _r = self.read_write_target(i.write_target);
+                     let w = self.execute_sax();
                      self.store_write_target(w, i.write_target);},
             DCP => { let r = self.read_write_target(i.write_target);
                      let w = self.execute_dcp(r);
@@ -733,7 +732,6 @@ impl C6502 {
         self.carry = v1 >= v2;
         self.zero = v1 == v2;
         self.negative = is_negative(result);
-        eprintln!("DEBUG - COMPARE - {} {} {} {} {}", v1, v2, self.carry, self.zero, self.negative);
     }
 
     fn execute_cmp(&mut self, v: u8) {
@@ -945,7 +943,7 @@ impl C6502 {
         self.x = v;
         self.update_accumulator_flags();
     }
-    fn execute_sax(&mut self, v:u8) -> u8 {
+    fn execute_sax(&mut self) -> u8 {
         return self.acc & self.x;
     }
     fn execute_dcp(&mut self, v:u8) -> u8 {
@@ -1032,11 +1030,11 @@ impl C6502 {
 impl AddressSpace for C6502 {
     fn peek(&self, ptr:u16) -> u8{
         let v = self.mapper.peek(ptr);
-        eprintln!("PEEK {} {}", ptr, v);
+        // eprintln!("PEEK {} {}", ptr, v);
         return v;
     }
     fn poke(&mut self, ptr:u16, v:u8) {
-        eprintln!("POKE {} {}", ptr, v);
+        // eprintln!("POKE {} {}", ptr, v);
         return self.mapper.poke(ptr, v);
     }
 }

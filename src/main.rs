@@ -12,6 +12,8 @@ use sdl2::pixels::Color;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::render::Canvas;
+use sdl2::render::Texture;
+use sdl2::render::TextureAccess;
 use sdl2::surface::Surface;
 use sdl2::video::Window;
 use std::time::Duration;
@@ -26,13 +28,20 @@ const CLOCKS_PER_FRAME:u32 = 29780;
 fn main() {
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
-    let window = video_subsystem.window("Rusty NES", 800, 600)
+    let window = video_subsystem.window("NES emulator", 800, 600)
         .position_centered()
         .build()
         .unwrap();
 
     let mut canvas = window.into_canvas().build().unwrap();
-    let mut render_surface = Surface::new(RENDER_WIDTH as u32, RENDER_HEIGHT as u32, PixelFormatEnum::Index8).unwrap();
+    let render_surface = Surface::new(RENDER_WIDTH as u32, RENDER_HEIGHT as u32, PixelFormatEnum::Index8).unwrap();
+    let texture_creator = canvas.texture_creator();
+    let mut texture = texture_creator.create_texture(
+        PixelFormatEnum::RGB24,
+        TextureAccess::Streaming,
+        RENDER_WIDTH as u32,
+        RENDER_HEIGHT as u32
+    ).unwrap();
     let mut nes = create_nes();
 
     canvas.set_draw_color(Color::RGB(0, 255, 255));
@@ -54,8 +63,8 @@ fn main() {
             }
         }
         // The rest of the game loop goes here...
-        render_frame(&mut nes, &mut render_surface);
-        present_frame(&mut canvas, &render_surface);
+        nes.run_frame();
+        present_frame(&mut canvas, &mut texture, &nes.ppu.display);
 
         canvas.present();
         ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
@@ -69,13 +78,9 @@ fn create_nes() -> Nes {
     return load_ines(rom, Box::new(joystick1), Box::new(joystick2));
 }
 
-fn render_frame(nes: &mut Nes, surface: &mut Surface) {
-    let buffer = surface.without_lock_mut().unwrap();
-    nes.run_frame(buffer);
-}
-
-fn present_frame(canvas: &mut Canvas<Window>, surface: &Surface) {
-    let texture_creator = canvas.texture_creator();
-    let texture = texture_creator.create_texture_from_surface(surface).unwrap();
+fn present_frame(canvas: &mut Canvas<Window>, texture: &mut Texture, ppu_pixels: &[u8]) {
+    texture.update(None, ppu_pixels, RENDER_WIDTH*3);
+    canvas.clear();
     canvas.copy(&texture, None, None);
+    canvas.present();
 }

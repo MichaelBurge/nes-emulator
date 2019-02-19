@@ -15,11 +15,13 @@ use crate::mapper::{Mapper, Ram};
 use std::fs::File;
 use std::io::Read;
 use std::io;
+use std::fmt;
+use std::ops::DerefMut;
 
 pub struct Nes {
     cpu: C6502,
     apu: Apu,
-    ppu: Ppu,
+    pub ppu: Box<Ppu>,
 }
 
 impl Nes {
@@ -27,7 +29,7 @@ impl Nes {
         return Nes {
             cpu: C6502::new(cpu_mapper),
             apu: Apu::new(),
-            ppu: Ppu::new(),
+            ppu: Box::new(Ppu::new()),
         };
     }
 }
@@ -49,6 +51,16 @@ impl AddressSpace for Joystick {
     fn poke(&mut self, _ptr:u16, _v:u8) { }
 }
 
+struct HiddenBytes(Vec<u8>);
+
+impl fmt::Debug for HiddenBytes {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let HiddenBytes(vec) = self;
+        write!(f, "[<<vector of length {}>>]", vec.len())
+    }
+}
+
+#[derive(Debug)]
 pub struct Ines {
     num_prg_chunks: u8,
     num_chr_chunks: u8,
@@ -59,7 +71,8 @@ pub struct Ines {
     has_four_screen_vram: bool,
     is_vs_unisystem: bool,
     is_playchoice10: bool,
-    prg_rom: Vec<u8>,
+    prg_rom: HiddenBytes,
+    chr_rom: HiddenBytes,
 }
 
 pub fn read_ines(filename: String) -> Result<Ines, io::Error> {
@@ -73,13 +86,20 @@ pub fn read_ines(filename: String) -> Result<Ines, io::Error> {
     assert!(header[2] == 0x53);
     assert!(header[3] == 0x1a);
     let num_prg_chunks = header[4];
+    let num_chr_chunks = header[5];
     let mut prg_rom:Vec<u8> = Vec::new();
     for _i in 0 .. num_prg_chunks {
         let mut bf:Vec<u8> = vec!(0; 16384);
         file.read_exact(&mut bf)?;
         prg_rom.append(&mut bf);
     }
-    return Ok(Ines {
+    let mut chr_rom:Vec<u8> = Vec::new();
+    for _i in 0 .. num_chr_chunks {
+        let mut bf:Vec<u8> = vec!(0; 8192);
+        file.read_exact(&mut bf)?;
+        chr_rom.append(&mut bf);
+    }
+    let ret = Ines {
         num_prg_chunks: num_prg_chunks,
         num_chr_chunks: header[5],
         mirroring: get_bit(header[6], 0) > 0,
@@ -89,34 +109,45 @@ pub fn read_ines(filename: String) -> Result<Ines, io::Error> {
         is_playchoice10: false, // TODO
         is_vs_unisystem: false, // TODO
         mapper: (header[6] >> 4) + (header[7] >> 4) << 4,
-        prg_rom: prg_rom,
-    });
+        prg_rom: HiddenBytes(prg_rom),
+        chr_rom: HiddenBytes(chr_rom),
+    };
+    // eprintln!("DEBUG - INES LOADED - {:?}", ret);
+    return Ok(ret);
 }
 
 pub fn load_ines(rom: Ines, joystick1: Box<Joystick>, joystick2: Box<Joystick>) -> Nes {
     assert!(rom.mapper == 0);
-    let cartridge = Rom::new(rom.prg_rom);
-    let mut mapper:Mapper = Mapper::new();
+    let cpu_mapper:Mapper = {
+        let HiddenBytes(bytes) = rom.prg_rom;
+        let cartridge = Rom::new(bytes);
+        let mut mapper = Mapper::new();
         match rom.num_prg_chunks {
             1 => { mapper.map_mirrored(0x0000, 0x3FFF, 0x8000, 0xFFFF, Box::new(cartridge), true) },
             2 => { mapper.map_mirrored(0x0000, 0x7FFF, 0x8000, 0xFFFF, Box::new(cartridge), true) },
             _ => panic!("load_ines - Unexpected number of PRG chunks"),
         };
+        mapper
+    };
+    let ppu_mapper:Rom = {
+        let HiddenBytes(bytes) = rom.chr_rom;
+        let cartridge_ppu = Rom::new(bytes);
+        cartridge_ppu
+    };
     let mut ret = Nes::new(Box::new(NullAddressSpace::new()));
-    ret.map_nes_cpu(joystick1, joystick2, Box::new(mapper));
-    ret.map_nes_ppu();
+    ret.map_nes_cpu(joystick1, joystick2, Box::new(cpu_mapper));
+    ret.map_nes_ppu(Box::new(ppu_mapper));
     return ret;
 }
 
 impl Nes {
-    pub fn run_frame(&mut self, buffer: &mut [u8]) {
+    pub fn run_frame(&mut self) {
         run_clocks(self, 29780);
-        self.ppu.render(buffer);
     }
     fn map_nes_cpu(&mut self, joystick1: Box<Joystick>, joystick2: Box<Joystick>, cartridge: Box<AddressSpace>) {
         let mut mapper:Mapper = Mapper::new();
         let cpu_ram:Ram = Ram::new(0x800);
-        let cpu_ppu:CpuPpuInterconnect = CpuPpuInterconnect::new(&mut self.ppu);
+        let cpu_ppu:CpuPpuInterconnect = CpuPpuInterconnect::new(self.ppu.deref_mut());
         // https://wiki.nesdev.com/w/index.php/CPU_memory_map
         mapper.map_mirrored(0x0000, 0x07ff, 0x0000, 0x1fff, Box::new(cpu_ram), false);
         mapper.map_mirrored(0x2000, 0x2007, 0x2000, 0x3fff, Box::new(cpu_ppu), true);
@@ -130,11 +161,13 @@ impl Nes {
         self.cpu.mapper = Box::new(mapper);
         self.cpu.initialize();
     }
-    fn map_nes_ppu(&mut self) {
+    fn map_nes_ppu(&mut self, cartridge_ppu: Box<AddressSpace>) {
         // https://wiki.nesdev.com/w/index.php/PPU_memory_map
         let mut mapper:Mapper = Mapper::new();
         let ppu_ram:Ram = Ram::new(0x800);
         let palette_ram:Ram = Ram::new(0x20);
+        // Pattern table
+        mapper.map_address_space(0x0000, 0x1FFF, cartridge_ppu, true);
         // Nametables
         mapper.map_mirrored(0x2000, 0x27FF, 0x2000, 0x2FFF, Box::new(ppu_ram), false);
         mapper.map_mirrored(0x3f00, 0x3f1f, 0x3f00, 0x3fff, Box::new(palette_ram), false);
@@ -146,7 +179,7 @@ impl Nes {
 impl Clocked for Nes {
     fn clock(&mut self) {
         self.cpu.clock();
-        //for i in 1..3 { self.ppu.clock(); }
+        for _i in 1..3 { self.ppu.clock(); }
     }
 }
 

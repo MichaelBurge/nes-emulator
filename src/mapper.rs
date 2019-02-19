@@ -135,7 +135,7 @@ impl Mapper {
                     return (space_idx, space_ptr);
                 }
             }
-        eprintln!("lookup_address_space - Unmapped pointer {:?} > {:?}", ptr, last_range_end);
+        eprintln!("lookup_address_space - Unmapped pointer {:?}.", ptr);
         eprintln!("Mappings:");
         self.print_mappings();
         panic!();
