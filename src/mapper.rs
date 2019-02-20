@@ -58,8 +58,8 @@ impl AddressSpace for Rom {
         //eprintln!("DEBUG - ROM-ACCESS - ({:?}, {:?})", ptr, value);
         return value;
     }
-    fn poke(&mut self, _ptr:u16, _value:u8) {
-        println!("Rom - Attempted to write read-only memory");
+    fn poke(&mut self, ptr:u16, value:u8) {
+        panic!("Rom - Attempted to write read-only memory at {} - value={}", ptr, value);
     }
 }
 

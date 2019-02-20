@@ -5,9 +5,15 @@ use crate::common::{run_clocks, Clocked, get_bit};
 use crate::mapper::AddressSpace;
 use crate::mapper::NullAddressSpace;
 
+use std::io;
+use std::mem::transmute;
+
+const ADDRESS_NMI:u16 = 0xFFFA;
 const ADDRESS_RESET:u16 = 0xFFFC;
-// const ADDRESS_RESET:u16 = 0xC000;
+const ADDRESS_BRK:u16 = 0xFFFE;
 const ADDRESS_TEST_PROGRAM:u16 = 0xC000;
+
+type TraceLevel = u8;
 
 // Ricoh 2A03, a variation of the 6502
 pub struct C6502 {
@@ -25,7 +31,8 @@ pub struct C6502 {
     pub mapper: Box<AddressSpace>,
     pub counter: usize,
     pub clocks: usize,
-    is_tracing: bool,
+    debugger: C6502Debugger,
+    pub is_tracing: bool,
 }
 
 impl C6502 {
@@ -47,10 +54,69 @@ impl C6502 {
             counter: 0,
             clocks: 0,
             is_tracing: false,
+            debugger: C6502Debugger::new(),
+            //is_tracing: true,
         }
     }
     pub fn initialize(&mut self) {
         self.pc = self.peek16(ADDRESS_RESET);
+    }
+}
+
+struct C6502Debugger {
+    pub break_step: bool,
+    pub break_nmi: bool,
+    pub break_irq: bool,
+}
+impl C6502Debugger {
+    pub fn new() -> C6502Debugger {
+        C6502Debugger {
+            break_step: true,
+            break_nmi: true,
+            break_irq: true,
+        }
+    }
+    fn prompt(&mut self) {
+        let mut input = String::new();
+        self.break_step = false;
+        self.break_nmi = false;
+        self.break_irq = false;
+        eprint!("> ");
+        match io::stdin().read_line(&mut input) {
+            Ok(n) => {
+                match input.as_ref() {
+                    "e\n" => panic!("Requested quit"),
+                    "s\n" => self.break_step = true,
+                    "v\n" => self.break_nmi = true,
+                    "sc\n" => self.break_irq = true,
+                    "\n" => self.break_step = true,
+                    "c\n" => {},
+                    i => {
+                        eprintln!("Unknown command '{:?}'", i);
+                        self.prompt();
+                    },
+                }
+            }
+            Err(x) => { panic!("Error reading input {}", x); },
+        }
+    }
+    pub fn on_step(&mut self, cpu: &C6502, num_bytes:u16, i:&Instruction) {
+        if self.break_step {
+            cpu.print_trace_line(num_bytes, &i);
+            self.prompt();
+        }
+    }
+    pub fn on_nmi(&mut self) {
+        if self.break_nmi {
+            eprintln!("DEBUG - VBLANK");
+            self.prompt();
+        }
+    }
+    pub fn on_irq(&mut self) {
+        if self.break_irq {
+            eprintln!("DEBUG - SCANLINE");
+            self.prompt();
+        }
     }
 }
 
@@ -411,6 +477,7 @@ impl Instruction {
 }
 
 impl Clocked for C6502 {
+    #[allow(mutable_transmutes)]
     fn clock(&mut self) {
         self.counter += 1;
         let ptr = self.pc;
@@ -419,10 +486,33 @@ impl Clocked for C6502 {
         { self.print_trace_line(num_bytes, &i); }
         self.pc = self.pc.wrapping_add(num_bytes);
         self.execute_instruction(i);
+        let debugger:&mut C6502Debugger = unsafe { transmute(&self.debugger) };
+        debugger.on_step(&self, num_bytes, &i);
     }
 }
 
 impl C6502 {
+    pub fn nmi(&mut self) {
+        let pc = self.pc;
+        let status = self.status_register_byte(false);
+        self.debugger.on_nmi();
+        self.push_stack16(pc);
+        self.push_stack(status);
+        self.pc = self.peek16(ADDRESS_NMI);
+    }
+    pub fn irq(&mut self) {
+        if self.interruptd {
+            return;
+        }
+        self.debugger.on_irq();
+        let pc = self.pc;
+        let status = self.status_register_byte(false);
+        self.push_stack16(pc);
+        self.push_stack(status);
+        self.pc = self.peek16(ADDRESS_BRK);
+    }
+
+
     fn print_trace_line(&self, num_bytes:u16, i:&Instruction) {
         let ptr = self.pc;
         let bytes:u32 = match num_bytes {
@@ -698,7 +788,7 @@ impl C6502 {
         self.push_stack16(pc);
         let sr = self.status_register_byte(true);
         self.push_stack(sr);
-        self.pc = self.peek16(0xFFFE);
+        self.pc = self.peek16(ADDRESS_BRK);
     }
 
     fn execute_bvc(&mut self, v: u8) {

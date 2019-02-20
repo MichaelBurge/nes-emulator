@@ -169,7 +169,7 @@ impl Nes {
         // Pattern table
         mapper.map_address_space(0x0000, 0x1FFF, cartridge_ppu, true);
         // Nametables
-        mapper.map_mirrored(0x2000, 0x27FF, 0x2000, 0x2FFF, Box::new(ppu_ram), false);
+        mapper.map_mirrored(0x2000, 0x27FF, 0x2000, 0x3EFF, Box::new(ppu_ram), false);
         mapper.map_mirrored(0x3f00, 0x3f1f, 0x3f00, 0x3fff, Box::new(palette_ram), false);
 
         self.ppu.mapper = Box::new(mapper);
@@ -180,6 +180,14 @@ impl Clocked for Nes {
     fn clock(&mut self) {
         self.cpu.clock();
         for _i in 1..3 { self.ppu.clock(); }
+        if self.ppu.is_vblank_nmi {
+            eprintln!("DEBUG - VBLANK-NMI DETECTED");
+            self.cpu.nmi();
+            self.ppu.is_vblank_nmi = false;
+        } else if self.ppu.is_scanline_irq {
+            self.cpu.irq();
+            self.ppu.is_scanline_irq = false;
+        }
     }
 }
 

@@ -30,6 +30,8 @@ pub struct Ppu {
     pub display: [u8; RENDER_SIZE],
     pub oam: [u8; 256],
     pub mapper: Box<dyn AddressSpace>,
+    pub is_vblank_nmi: bool,
+    pub is_scanline_irq: bool,
 
     base_nametable: u8,
     vram_ptr: u16, // PPUADDR
@@ -199,6 +201,8 @@ impl Ppu {
             display: [0; RENDER_SIZE],
             oam: [0; 256],
             mapper: Box::new(mapper),
+            is_vblank_nmi: false,
+            is_scanline_irq: false,
 
             base_nametable: 0,
             vram_ptr: 0,
@@ -255,9 +259,11 @@ impl Ppu {
 
     pub fn render_scanline_vblank(&mut self) {
         if self.scanline == 241 {
-            eprintln!("DEBUG - VBLANK HIT");
+            eprintln!("DEBUG - VBLANK HIT - {}", self.generate_vblank_nmi);
             self.set_vblank(true);
-            // TODO - vblank NMI
+            if self.generate_vblank_nmi {
+                self.is_vblank_nmi = true;
+            }
         }
     }
 
@@ -426,7 +432,7 @@ impl Ppu {
         self.background_pattern_table = get_bit(v,4)>0;
         self.sprite_size = get_bit(v,5)>0;
         self.ppu_master_select = get_bit(v,6)>0;
-        self.generate_vblank_nmi = get_bit(v,6)>0;
+        self.generate_vblank_nmi = get_bit(v,7)>0;
     }
     pub fn write_mask(&mut self, v:u8) {
         self.is_greyscale = get_bit(v,0)>0;
@@ -472,12 +478,11 @@ impl Ppu {
     }
     pub fn write_address(&mut self, v:u8) {
         if self.address_latch_set {
-            self.vram_ptr &= 0xff00;
-            self.vram_ptr |= (v as u16) << 8;
-        } else {
-            self.vram_ptr &= 0x00ff;
             self.vram_ptr |= (v as u16) << 0;
+        } else {
+            self.vram_ptr  = (v as u16) << 8;
         }
+        eprintln!("DEBUG - PPU WRITE ADDRESS - {} {} {:x}", v, self.address_latch_set, self.vram_ptr);
         self.address_latch_set = true;
     }
     pub fn read_data(&mut self) -> u8 {
@@ -486,6 +491,7 @@ impl Ppu {
     }
     pub fn write_data(&mut self, v:u8) {
         let ptr = self.vram_ptr;
+        eprintln!("DEBUG - PPU WRITE DATA - {}", v);
         self.poke(ptr, v);
         let increment = self.vram_ptr_increment;
         self.vram_ptr = self.vram_ptr.wrapping_add(increment as u16);
