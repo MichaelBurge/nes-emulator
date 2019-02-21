@@ -89,6 +89,7 @@ impl AddressSpace for Ppu {
 
 #[derive(Copy, Clone)]
 struct Sprite {
+    sprite_index:u8,
     x: u8,
     y: u8,
     tile_index: u8,
@@ -175,9 +176,7 @@ impl Clocked for Ppu {
         if scanline == 261 {
             self.render_scanline_prerender();
         } else if scanline < SCANLINE_POSTRENDER {
-            let mut buf = [0;256];
-            self.render_scanline(scanline as u8, &mut buf);
-            let ptr_base = 256 * (scanline as usize);
+            self.render_scanline(scanline as u8);
             self.clocks_to_pause = 341;
         } else if scanline == SCANLINE_POSTRENDER {
             self.render_scanline_postrender();
@@ -250,6 +249,7 @@ impl Ppu {
     pub fn render_scanline_prerender(&mut self) {
         if self.is_rendering_enabled() {
             self.clocks_to_pause = ternary(self.frame_parity, 341, 340)-1;
+            self.sprite0_hit = false;
             // TODO - "During pixels 280 through 304 of this scanline, the vertical scroll bits are reloaded if rendering is enabled. "
             // TODO - Make memory accesses that a regular scanline would
         } else {
@@ -271,16 +271,15 @@ impl Ppu {
     }
 
     // https://wiki.nesdev.com/w/index.php/PPU_sprite_priority
-    fn render_scanline(&mut self, y: u8, buf: &mut[u8]) {
+    fn render_scanline(&mut self, y: u8) {
         let ptr_base = 256 * (y as usize);
         let global_background_color = self.lookup_global_background_color();
         // Each PPU clock cycle produces one pixel. The HBlank period is used to perform memory accesses.
         let sprites = self.fetch_scanline_sprites(y);
-        for x in 0..255 {
+        for x in 0..=255 {
 
             let (background_tile, background_palette) = self.lookup_tile(x,y);
             let background_color = self.render_pattern_subpixel(background_tile, PaletteType::Background, background_palette, x % 8, y % 8);
-
             let (is_sprite_front, sprite_color) =
                 match self.find_matching_sprite(x, &sprites) {
                     None => (false, None),
@@ -290,16 +289,25 @@ impl Ppu {
                         // TODO: In 8x16 mode, use the next tile if ysub belongs in the lower half of the sprite.
                         let ysub = (x.wrapping_sub(sprite.y)) % 8;
                         let sprite_color = self.render_pattern_subpixel(sprite.tile_index, PaletteType::Sprite, sprite.palette, xsub, ysub);
+                        // Sprite 0 test
+                        if sprite.sprite_index == 0 &&
+                            sprite_color.is_some() &&
+                            background_color.is_some() {
+                                self.sprite0_hit = true;
+                            }
+
                         (sprite.is_front, sprite_color)
                     },
                 };
 
             if is_sprite_front && sprite_color.is_some() {
+                // eprintln!("DEBUG - SPRITEF - {}", sprite_color.unwrap());
                 self.write_system_pixel(x, y, sprite_color.unwrap());
             } else if background_color.is_some() {
+                // eprintln!("DEBUG - BACKGROUND - {}", background_color.unwrap());
                 self.write_system_pixel(x, y, background_color.unwrap());
-                buf[x as usize] = background_color.unwrap();
             } else if sprite_color.is_some() {
+                // eprintln!("DEBUG - SPRITEB - {}", sprite_color.unwrap());
                 self.write_system_pixel(x, y, sprite_color.unwrap());
             } else {
                 self.write_system_pixel(x, y, global_background_color);
@@ -344,8 +352,8 @@ impl Ppu {
         let tile_row0 = self.peek(ptr_tile_row0);
         let tile_row1 = self.peek(ptr_tile_row1);
         let color =
-            get_bit(tile_row0, xsub) << 0 +
-            get_bit(tile_row1, xsub) << 1;
+            get_bit(tile_row0, 7 - xsub) << 0 +
+            get_bit(tile_row1, 7 - xsub) << 1;
         return color;
     }
 
@@ -375,6 +383,7 @@ impl Ppu {
     fn lookup_sprite(&self, i: usize) -> Sprite {
         let attribute = self.oam[i*4 + 2];
         return Sprite {
+            sprite_index: i as u8,
             y: self.oam[i*4 + 0],
             tile_index: self.oam[i*4 + 1],
             palette: get_bit(attribute, 0) + get_bit(attribute, 1) << 1,
@@ -391,16 +400,16 @@ impl Ppu {
 
     fn lookup_tile(&self, x:u8, y:u8) -> (PatternId, PaletteId) {
         let nametable = 0; // TODO - Implement scrolling
-        let idx_x = x/32;
-        let idx_y = y/32;
+        let idx_x = (x/8) as u16;
+        let idx_y = (y/8) as u16;
 
         let tile = self.lookup_nametable(nametable, idx_x, idx_y);
-        let palette = self.lookup_attribute_table(nametable, idx_x, idx_y);
+        let palette = self.lookup_attribute_table(nametable, x, y);
 
         return (tile, palette);
     }
 
-    fn lookup_nametable(&self, nametable:u8, idx_x:u8, idx_y:u8) -> PatternId {
+    fn lookup_nametable(&self, nametable:u8, idx_x:u16, idx_y:u16) -> PatternId {
         let idx = idx_y * 32 + idx_x;
         let ptr =
             ADDRESS_NAMETABLE0 +
@@ -410,15 +419,16 @@ impl Ppu {
     }
 
     fn lookup_attribute_table(&self, nametable:u8, x:u8, y:u8) -> PaletteId {
-        let idx_x = x/32;
-        let idx_y = x/32;
-        let idx = idx_y * 32 + idx_x;
+        let idx_x = x/8;
+        let idx_y = y/8;
+        let group = idx_y / 4 * 8 + idx_x/4;
+        let idx = (idx_y as u16) * 32 + (idx_x as u16);
         let ptr =
             ADDRESS_ATTRIBUTE_TABLE0 +
             NAMETABLE_SIZE*(nametable as u16) +
             (idx as u16);
         let entry = self.peek(ptr);
-        let quadrant = (x % 32) / 16 + 2*(y % 32) / 16;
+        let quadrant = (idx_x % 4) / 2 + 2*((y % 4) / 2);
         let palette_id =
             get_bit(entry, quadrant*2) << 0 +
             get_bit(entry, quadrant*2+1) << 1;
@@ -505,14 +515,14 @@ impl Ppu {
     fn lookup_system_pixel(&self, i: SystemColor) -> RgbColor {
         return SYSTEM_PALETTE[i as usize];
     }
-    fn write_system_pixel(&mut self, x: u8, y: u8, c: SystemColor) {
-        // c = 22;
+    fn write_system_pixel(&mut self, x: u8, y: u8, mut c: SystemColor) {
+        //c = 22;
         let (r,g,b) = self.lookup_system_pixel(c);
         let xz = x as usize;
         let yz = y as usize;
-        let i1 = xz+(256*yz)+0;
-        let i2 = xz+(256*yz)+1;
-        let i3 = xz+(256*yz)+2;
+        let i1 = 3*(xz+(256*yz))+0;
+        let i2 = 3*(xz+(256*yz))+1;
+        let i3 = 3*(xz+(256*yz))+2;
         // eprintln!("DEBUG - ({} {}) ({} {}) ({} {})", i1, r, i2, g, i3, b);
         self.display[i1] = r;
         self.display[i2] = g;

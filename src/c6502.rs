@@ -744,7 +744,6 @@ impl C6502 {
     }
 
     fn execute_bcc(&mut self, v: u8) {
-        eprintln!("DEBUG - CARRY - {} {}", self.carry, 0xf9 & 0b00000001 > 0);
         if !self.carry
         { self.execute_branch(v); }
     }

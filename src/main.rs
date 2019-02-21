@@ -24,17 +24,17 @@ use crate::ppu::*;
 
 // https://wiki.nesdev.com/w/index.php/Cycle_reference_chart
 const CLOCKS_PER_FRAME:u32 = 29780;
+const SCALE:usize = 2;
 
 fn main() {
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
-    let window = video_subsystem.window("NES emulator", 800, 600)
+    let window = video_subsystem.window("NES emulator", (RENDER_WIDTH*SCALE) as u32, (RENDER_HEIGHT*SCALE) as u32)
         .position_centered()
         .build()
         .unwrap();
 
     let mut canvas = window.into_canvas().build().unwrap();
-    let render_surface = Surface::new(RENDER_WIDTH as u32, RENDER_HEIGHT as u32, PixelFormatEnum::Index8).unwrap();
     let texture_creator = canvas.texture_creator();
     let mut texture = texture_creator.create_texture(
         PixelFormatEnum::RGB24,
@@ -72,7 +72,8 @@ fn main() {
 }
 
 fn create_nes() -> Nes {
-    let rom = read_ines("roms/nestest.nes".to_string()).unwrap();
+    let filename = "roms/palette.nes";
+    let rom = read_ines(filename.to_string()).unwrap();
     let joystick1 = Joystick::new();
     let joystick2 = Joystick::new();
     return load_ines(rom, Box::new(joystick1), Box::new(joystick2));

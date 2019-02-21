@@ -117,7 +117,9 @@ pub fn read_ines(filename: String) -> Result<Ines, io::Error> {
 }
 
 pub fn load_ines(rom: Ines, joystick1: Box<Joystick>, joystick2: Box<Joystick>) -> Nes {
-    assert!(rom.mapper == 0);
+    if rom.mapper != 0 {
+        panic!("Only mapper 0 supported. Found {}", rom.mapper);
+    }
     let cpu_mapper:Mapper = {
         let HiddenBytes(bytes) = rom.prg_rom;
         let cartridge = Rom::new(bytes);
