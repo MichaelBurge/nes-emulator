@@ -515,8 +515,7 @@ impl Ppu {
     fn lookup_system_pixel(&self, i: SystemColor) -> RgbColor {
         return SYSTEM_PALETTE[i as usize];
     }
-    fn write_system_pixel(&mut self, x: u8, y: u8, mut c: SystemColor) {
-        //c = 22;
+    fn write_system_pixel(&mut self, x: u8, y: u8, c: SystemColor) {
         let (r,g,b) = self.lookup_system_pixel(c);
         let xz = x as usize;
         let yz = y as usize;

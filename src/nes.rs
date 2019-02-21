@@ -11,6 +11,7 @@ use crate::ppu::PpuPort;
 use crate::ppu::PpuPort::*;
 use crate::apu::ApuPort::*;
 use crate::mapper::{Mapper, Ram};
+use crate::joystick::Joystick;
 
 use std::fs::File;
 use std::io::Read;
@@ -33,24 +34,6 @@ impl Nes {
         };
     }
 }
-
-pub struct Joystick {
-}
-
-impl Joystick {
-    pub fn new() -> Joystick {
-        Joystick {
-        }
-    }
-}
-
-impl AddressSpace for Joystick {
-    fn peek(&self, _ptr:u16) -> u8 {
-        return 0; // TODO - Implement joystick
-    }
-    fn poke(&mut self, _ptr:u16, _v:u8) { }
-}
-
 struct HiddenBytes(Vec<u8>);
 
 impl fmt::Debug for HiddenBytes {
@@ -116,7 +99,7 @@ pub fn read_ines(filename: String) -> Result<Ines, io::Error> {
     return Ok(ret);
 }
 
-pub fn load_ines(rom: Ines, joystick1: Box<Joystick>, joystick2: Box<Joystick>) -> Nes {
+pub fn load_ines(rom: Ines, joystick1: Box<AddressSpace>, joystick2: Box<AddressSpace>) -> Nes {
     if rom.mapper != 0 {
         panic!("Only mapper 0 supported. Found {}", rom.mapper);
     }
@@ -146,7 +129,10 @@ impl Nes {
     pub fn run_frame(&mut self) {
         run_clocks(self, 29780);
     }
-    fn map_nes_cpu(&mut self, joystick1: Box<Joystick>, joystick2: Box<Joystick>, cartridge: Box<AddressSpace>) {
+    pub fn break_debugger(&mut self) {
+        self.cpu.break_debugger();
+    }
+    fn map_nes_cpu(&mut self, joystick1: Box<AddressSpace>, joystick2: Box<AddressSpace>, cartridge: Box<AddressSpace>) {
         let mut mapper:Mapper = Mapper::new();
         let cpu_ram:Ram = Ram::new(0x800);
         let cpu_ppu:CpuPpuInterconnect = CpuPpuInterconnect::new(self.ppu.deref_mut());

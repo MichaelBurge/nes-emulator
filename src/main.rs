@@ -4,6 +4,7 @@ mod ppu;
 mod apu;
 mod mapper;
 mod nes;
+mod joystick;
 
 extern crate sdl2;
 
@@ -14,12 +15,13 @@ use sdl2::keyboard::Keycode;
 use sdl2::render::Canvas;
 use sdl2::render::Texture;
 use sdl2::render::TextureAccess;
-use sdl2::surface::Surface;
 use sdl2::video::Window;
 use std::time::Duration;
 
+use crate::joystick::Joystick;
+use crate::mapper::AddressSpace;
 use crate::nes::Nes;
-use crate::nes::{load_ines, read_ines, Joystick};
+use crate::nes::{load_ines, read_ines};
 use crate::ppu::*;
 
 // https://wiki.nesdev.com/w/index.php/Cycle_reference_chart
@@ -29,6 +31,9 @@ const SCALE:usize = 2;
 fn main() {
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
+    let controller_subsystem = sdl_context.game_controller().unwrap();
+    let joystick1 = Joystick::new(&controller_subsystem, 0);
+    let joystick2 = Joystick::new(&controller_subsystem, 1);
     let window = video_subsystem.window("NES emulator", (RENDER_WIDTH*SCALE) as u32, (RENDER_HEIGHT*SCALE) as u32)
         .position_centered()
         .build()
@@ -42,7 +47,7 @@ fn main() {
         RENDER_WIDTH as u32,
         RENDER_HEIGHT as u32
     ).unwrap();
-    let mut nes = create_nes();
+    let mut nes = create_nes(Box::new(joystick1), Box::new(joystick2));
 
     canvas.set_draw_color(Color::RGB(0, 255, 255));
     canvas.clear();
@@ -59,6 +64,9 @@ fn main() {
                 Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
                     break 'running
                 },
+                Event::KeyDown { keycode: Some(Keycode::Pause), .. } => {
+                    nes.break_debugger();
+                },
                 _ => {}
             }
         }
@@ -71,17 +79,15 @@ fn main() {
     }
 }
 
-fn create_nes() -> Nes {
-    let filename = "roms/palette.nes";
+fn create_nes(joystick1:Box<AddressSpace>, joystick2:Box<AddressSpace>) -> Nes {
+    let filename = "roms/donkey_kong.nes";
     let rom = read_ines(filename.to_string()).unwrap();
-    let joystick1 = Joystick::new();
-    let joystick2 = Joystick::new();
-    return load_ines(rom, Box::new(joystick1), Box::new(joystick2));
+    return load_ines(rom, joystick1, joystick2);
 }
 
 fn present_frame(canvas: &mut Canvas<Window>, texture: &mut Texture, ppu_pixels: &[u8]) {
-    texture.update(None, ppu_pixels, RENDER_WIDTH*3);
+    texture.update(None, ppu_pixels, RENDER_WIDTH*3).unwrap();
     canvas.clear();
-    canvas.copy(&texture, None, None);
+    canvas.copy(&texture, None, None).unwrap();
     canvas.present();
 }

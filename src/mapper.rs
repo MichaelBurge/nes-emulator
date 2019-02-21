@@ -1,3 +1,6 @@
+use std::cell::UnsafeCell;
+use std::borrow::BorrowMut;
+
 pub trait AddressSpace {
     // Minimal definition
     fn peek(&self, ptr: u16) -> u8;
@@ -99,8 +102,13 @@ impl NullAddressSpace {
     }
 }
 impl AddressSpace for NullAddressSpace {
-    fn peek(&self, _ptr:u16) -> u8{ return 0; }
-    fn poke(&mut self, _ptr:u16, _value:u8) { }
+    fn peek(&self, ptr:u16) -> u8{
+        eprintln!("DEBUG - READ FROM NULL MAP {:x}", ptr);
+        return 0;
+    }
+    fn poke(&mut self, ptr:u16, value:u8) {
+        eprintln!("DEBUG - WRITE TO NULL MAP {:x} {:x}", ptr, value);
+    }
 }
 
 type UsesOriginalAddress = bool;
@@ -155,7 +163,7 @@ impl Mapper {
     }
     pub fn map_null(&mut self, begin: u16, end: u16) {
         let space:NullAddressSpace = NullAddressSpace {};
-        self.map_address_space(begin, end, Box::new(space), false);
+        self.map_address_space(begin, end, Box::new(space), true);
     }
     pub fn map_mirrored(&mut self, begin: u16, end: u16, extended_begin: u16, extended_end: u16, space: Box<dyn AddressSpace>, use_original: bool) {
         let base_begin =
@@ -186,8 +194,51 @@ impl AddressSpace for Mapper {
     }
 }
 
+#[derive(Debug, PartialEq, Copy, Clone)]
+pub enum AccessType { Read, Write }
+
+pub type LoggedAddressSpaceRecord = (usize, AccessType, u16, u8);
+
+pub struct LoggedAddressSpace {
+    pub space: Box<AddressSpace>,
+    pub log: UnsafeCell<Vec<LoggedAddressSpaceRecord>>,
+}
+
+impl LoggedAddressSpace {
+    pub fn new(space:Box<AddressSpace>) -> LoggedAddressSpace {
+        LoggedAddressSpace {
+            space: space,
+            log: UnsafeCell::new(vec!()),
+        }
+    }
+    pub fn get_log(&self) -> &mut Vec<LoggedAddressSpaceRecord> {
+        return unsafe { &mut *self.log.get() };
+    }
+    pub fn copy_log(&self) -> Vec<LoggedAddressSpaceRecord> {
+        return self.get_log().clone();
+    }
+}
+
+impl AddressSpace for LoggedAddressSpace {
+    fn peek(&self, ptr: u16) -> u8{
+        let v = self.space.peek(ptr);
+        let log = self.get_log();
+        let record = (log.len(), AccessType::Read, ptr, v);
+        log.push(record);
+        return v;
+    }
+    fn poke(&mut self, ptr: u16, v: u8) {
+        let log = self.get_log();
+        let record = (log.len(), AccessType::Write, ptr, v);
+        log.push(record);
+        self.space.poke(ptr, v);
+    }
+}
+
 mod tests {
-    // use super::*;
+    use super::Rom;
+    use super::Mapper;
+    use super::AddressSpace;
 
     #[test]
     fn test_rom() {

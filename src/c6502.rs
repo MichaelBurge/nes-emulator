@@ -4,9 +4,11 @@
 use crate::common::{run_clocks, Clocked, get_bit};
 use crate::mapper::AddressSpace;
 use crate::mapper::NullAddressSpace;
+use crate::mapper::LoggedAddressSpace;
 
 use std::io;
 use std::mem::transmute;
+use std::mem::transmute_copy;
 
 const ADDRESS_NMI:u16 = 0xFFFA;
 const ADDRESS_RESET:u16 = 0xFFFC;
@@ -33,6 +35,7 @@ pub struct C6502 {
     pub clocks: usize,
     debugger: C6502Debugger,
     pub is_tracing: bool,
+    clocks_to_pause: u8,
 }
 
 impl C6502 {
@@ -41,7 +44,7 @@ impl C6502 {
             acc: 0,
             x: 0,
             y: 0,
-            //pc: mapper.peek16(ADDRESS_RESET),
+            // pc: mapper.peek16(ADDRESS_RESET),
             pc: ADDRESS_TEST_PROGRAM,
             sp: 0xfd,
             carry: false,
@@ -55,7 +58,7 @@ impl C6502 {
             clocks: 0,
             is_tracing: false,
             debugger: C6502Debugger::new(),
-            //is_tracing: true,
+            clocks_to_pause: 6, // For the initial ADDRESS_RESET fetch
         }
     }
     pub fn initialize(&mut self) {
@@ -71,9 +74,9 @@ struct C6502Debugger {
 impl C6502Debugger {
     pub fn new() -> C6502Debugger {
         C6502Debugger {
-            break_step: true,
-            break_nmi: true,
-            break_irq: true,
+            break_step: false,
+            break_nmi: false,
+            break_irq: false,
         }
     }
     fn prompt(&mut self) {
@@ -463,6 +466,8 @@ struct Instruction {
     mode: AddressingMode,
     mode_args: u16,
     write_target: WriteTarget,
+    num_clocks: u8,
+    oops_cycle: bool,
 }
 
 impl Instruction {
@@ -480,6 +485,10 @@ impl Clocked for C6502 {
     #[allow(mutable_transmutes)]
     fn clock(&mut self) {
         self.counter += 1;
+        if self.clocks_to_pause > 0 {
+            self.clocks_to_pause -= 1;
+            return;
+        }
         let ptr = self.pc;
         let (i, num_bytes) = self.decode_instruction();
         if self.is_tracing
@@ -488,10 +497,18 @@ impl Clocked for C6502 {
         self.execute_instruction(i);
         let debugger:&mut C6502Debugger = unsafe { transmute(&self.debugger) };
         debugger.on_step(&self, num_bytes, &i);
+        self.clocks_to_pause += i.num_clocks-1;
+        // TODO: Implement "oops cycle" for indexing modes that cross a page boundary.
     }
 }
 
 impl C6502 {
+    pub fn run_instructions(&mut self, n:usize) {
+        for _i in 0..n {
+            self.clocks_to_pause = 0;
+            self.clock();
+        }
+    }
     pub fn nmi(&mut self) {
         let pc = self.pc;
         let status = self.status_register_byte(false);
@@ -512,6 +529,9 @@ impl C6502 {
         self.pc = self.peek16(ADDRESS_BRK);
     }
 
+    pub fn break_debugger(&mut self) {
+        self.debugger.prompt();
+    }
 
     fn print_trace_line(&self, num_bytes:u16, i:&Instruction) {
         let ptr = self.pc;
@@ -533,9 +553,21 @@ impl C6502 {
         let opcode = self.peek(ptr) as usize;
         //eprintln!("DEBUG - Opcode - {:x}", opcode);
         let (op, mode, clocks, page_clocks) = OPCODE_TABLE[opcode];
-        let (mode_args, write_target, num_arg_bytes) = self.decode_addressing_mode(mode, ptr.wrapping_add(1));
-        let instruction = Instruction { op, mode, mode_args, write_target };
+        let generate_read = self.should_generate_read(op);
+        let (mode_args, write_target, num_arg_bytes, oops_cycle) = self.decode_addressing_mode(mode, ptr.wrapping_add(1), generate_read);
+        // TODO: Use page_clocks
+        let instruction = Instruction { op, mode, mode_args, write_target, num_clocks: clocks, oops_cycle };
         return (instruction, 1 + num_arg_bytes);
+    }
+
+    // The STA, STX, and STY operations calculate an address but don't read it. All other instructions do read the address.
+    fn should_generate_read(&self, op:Operation) -> bool {
+        match op {
+            STA => false,
+            STX => false,
+            STY => false,
+            _ => true,
+        }
     }
 
     fn read_write_target(&self, write_target: Option<u16>) -> u8 {
@@ -663,54 +695,67 @@ impl C6502 {
     }
 
     // Returns the instruction arguments and the number of bytes after the opcode they took to store.
-    fn decode_addressing_mode(&self, mode: AddressingMode, ptr: u16) -> (u16, Option<u16>, u16) {
+    fn decode_addressing_mode(&self, mode: AddressingMode, ptr: u16, read:bool) -> (u16, Option<u16>, u16, bool) {
         match mode {
-            // (Value, Address, Additional Bytes)
-            Immediate   => (self.peek(ptr) as u16, Some(ptr), 1),
+            // (Value, Address, Additional Bytes, "oops" cycle)
+            Immediate   => {
+                let v = if read { self.peek(ptr) as u16 } else { 0xDEAD};
+                (v, Some(ptr), 1, false)
+            },
             ZeroPage    => {
                 let addr = self.peek(ptr) as u16;
-                (self.peek(addr) as u16, Some(addr), 1)
+                let v = if read { self.peek(addr) as u16} else { 0xDEAD };
+                (v, Some(addr), 1, false)
             },
             ZeroPageX   => {
                 let addr = self.peek(ptr).wrapping_add(self.x) as u16;
-                (self.peek(addr) as u16, Some(addr), 1)
+                let v = if read { self.peek(addr) as u16} else { 0xDEAD};
+                (v, Some(addr), 1, false)
             },
             ZeroPageY   => {
                 let addr = self.peek(ptr).wrapping_add(self.y) as u16;
-                (self.peek(addr) as u16, Some(addr), 1)
+                let v = if read { self.peek(addr) as u16} else { 0xDEAD};
+                (v, Some(addr), 1, false)
             },
             Absolute    => {
                 let addr = self.peek16(ptr);
-                (self.peek(addr) as u16, Some(addr), 2)
+                let v = if read { self.peek(addr) as u16} else { 0xDEAD};
+                (v, Some(addr), 2, false)
             },
             AbsoluteX   => {
-                let addr = self.peek16(ptr).wrapping_add(self.x as u16);
-                (self.peek(addr) as u16, Some(addr), 2)
+                let base_addr = self.peek16(ptr);
+                let addr = base_addr.wrapping_add(self.x as u16);
+                let v = if read { self.peek(addr) as u16 } else { 0xDEAD};
+                (v, Some(addr), 2, true)
             },
             AbsoluteY   => {
                 let addr = self.peek16(ptr).wrapping_add(self.y as u16);
-                (self.peek(addr) as u16, Some(addr), 2)
+                let v = if read { self.peek(addr) as u16 } else { 0xDEAD};
+                (v, Some(addr), 2, true)
             },
             Indirect    => {
                 let addr = self.peek16(ptr);
                 let jmp_ptr = self.peek16_pagewrap(addr);
-                (0xDEAD, Some(jmp_ptr), 2)
+                (0xDEAD, Some(jmp_ptr), 2, false)
             },
             IndirectX   => {
                 let zp_addr = self.peek(ptr).wrapping_add(self.x);
                 let addr = self.peek_zero16(zp_addr);
-                (self.peek(addr) as u16, Some(addr), 1)
+                let v = if read { self.peek(addr) as u16} else { 0xDEAD};
+                (v, Some(addr), 1, false)
             },
             IndirectY   => {
                 let zp_addr = self.peek(ptr);
                 let addr = self.peek_zero16(zp_addr).wrapping_add(self.y as u16);
-                (self.peek(addr) as u16, Some(addr), 1)
+                let v = if read { self.peek(addr) as u16 } else { 0xDEAD};
+                (v, Some(addr), 1, true)
             },
             Relative    => {
-                (self.peek(ptr) as u16, Some(ptr), 1)
+                let v = if read { self.peek(ptr) as u16 } else { 0xDEAD};
+                (v, Some(ptr), 1, false)
             }
-            Accumulator => (self.acc as u16, None, 0),
-            Implicit    => (0xDEAD, None, 0),
+            Accumulator => (self.acc as u16, None, 0, false),
+            Implicit    => (0xDEAD, None, 0, false),
         }
     }
 }
@@ -740,7 +785,12 @@ impl C6502 {
     }
 
     fn execute_branch(&mut self, v: u8) {
+        let old_pc = self.pc;
         self.pc = self.pc.wrapping_add((v as i8) as u16);
+        self.clocks_to_pause += 1;
+        if C6502::crossed_page_boundary(self.pc, old_pc) {
+            self.clocks_to_pause += 1;
+        }
     }
 
     fn execute_bcc(&mut self, v: u8) {
@@ -763,8 +813,8 @@ impl C6502 {
         self.negative = 0b10000000 & v > 0;
         self.overflow = 0b01000000 & v > 0;
         self.zero = x == 0;
-        eprintln!("V:{} A:{} N:{} O:{} Z:{}",
-                  v, self.acc, self.negative, self.overflow, self.zero);
+        /*eprintln!("V:{} A:{} N:{} O:{} Z:{}",
+        v, self.acc, self.negative, self.overflow, self.zero);*/
     }
 
     fn execute_bmi(&mut self, v: u8) {
@@ -1114,6 +1164,9 @@ impl C6502 {
                             (((ptr % 256) as u8).wrapping_add(1) as u16)) as u16;
         return (msb << 8) | lsb;
     }
+    fn crossed_page_boundary(ptr1:u16, ptr2:u16) -> bool {
+        return (ptr1 / 256) != (ptr2 / 256);
+    }
 }
 
 impl AddressSpace for C6502 {
@@ -1172,16 +1225,21 @@ mod tests {
     use super::*;
 
     use crate::mapper::Ram;
+    use crate::mapper::AccessType;
+
+    use std::ops::DerefMut;
 
     fn create_test_cpu(program:&Vec<u8>) -> C6502 {
-        let mut mapper = Ram::new(65536);
+        let mut memory = Ram::new(65536);
         for (byte, idx) in program.iter().zip(0..65536) {
-            mapper.poke(ADDRESS_TEST_PROGRAM + idx as u16, *byte)
+            memory.poke(ADDRESS_TEST_PROGRAM + idx as u16, *byte)
         }
-        let mut ret = C6502::new(Box::new(mapper));
-        ret.pc = ADDRESS_TEST_PROGRAM;
-        ret.is_tracing = false;
-        return ret;
+        let logged_memory:LoggedAddressSpace = LoggedAddressSpace::new(Box::new(memory));
+        let mapper = Box::new(logged_memory);
+        let mut cpu = C6502::new(mapper);
+        cpu.pc = ADDRESS_TEST_PROGRAM;
+        cpu.is_tracing = false;
+        return cpu;
     }
 
     #[test]
@@ -1191,10 +1249,7 @@ mod tests {
                                    0x24, 0x01, // BIT $01
         );
         let mut c = create_test_cpu(&program);
-        c.clock();
-        c.clock();
-        c.clock();
-        eprintln!("STATUS REGISTER {}", c.status_register_byte(true));
+        c.run_instructions(3);
         assert!(c.overflow);
     }
     #[test]
@@ -1205,8 +1260,7 @@ mod tests {
             );
         let mut c = create_test_cpu(&program);
         c.is_tracing = true;
-        c.clock();
-        c.clock();
+        c.run_instructions(2);
         assert_eq!(c.pc, 0xC003);
     }
     #[test]
@@ -1224,7 +1278,7 @@ mod tests {
                 0x68,       // PLA
             );
         let mut c = create_test_cpu(&program);
-        run_clocks(&mut c, 9);
+        c.run_instructions(9);
         assert_eq!(c.acc, 111);
     }
     #[test]
@@ -1236,7 +1290,7 @@ mod tests {
             );
         let mut c = create_test_cpu(&program);
         c.set_status_register_from_byte(0x6E);
-        run_clocks(&mut c, 2);
+        c.run_instructions(2);
         assert_eq!(c.status_register_byte(true), 0x2c);
     }
     #[test]
@@ -1247,7 +1301,7 @@ mod tests {
         c.set_status_register_from_byte(0xf9);
         assert_eq!(c.carry, true);
         let pc = c.pc;
-        c.clock();
+        c.run_instructions(1);
         assert_eq!(c.pc - pc, 2); // Branch not taken
     }
     #[test]
@@ -1267,7 +1321,7 @@ mod tests {
                  0x68,             // PLA
             );
         let mut c = create_test_cpu(&program);
-        run_clocks(&mut c, 2);
+        c.run_instructions(2);
         assert_eq!(c.acc, 0x02);
     }
     #[test]
@@ -1277,7 +1331,7 @@ mod tests {
                  0x4a,);     // LSR
         let mut c = create_test_cpu(&program);
         c.set_status_register_from_byte(0x65);
-        run_clocks(&mut c, 2);
+        c.run_instructions(2);
         assert_eq!(c.status_register_byte(true), 0x67);
     }
     #[test]
@@ -1288,7 +1342,7 @@ mod tests {
         let mut c = create_test_cpu(&program);
         c.is_tracing = true;
         c.set_status_register_from_byte(0xe5);
-        run_clocks(&mut c, 2);
+        c.run_instructions(2);
         assert_eq!(c.acc, 0);
         assert_eq!(c.status_register_byte(true), 0x67);
     }
@@ -1299,8 +1353,28 @@ mod tests {
                  0x6a);      // ROR
         let mut c = create_test_cpu(&program);
         c.set_status_register_from_byte(0x24);
-        run_clocks(&mut c, 2);
+        c.run_instructions(2);
         assert_eq!(c.acc, 0x2A);
         assert_eq!(c.status_register_byte(true), 0x25);
+    }
+    #[test]
+    fn test_sta_no_read() {
+        let program:Vec<u8> =
+            vec!(0xa9, 0x05,      // LDA #$05
+                 0x8d,0x00,0x00, // STA $0000
+            );
+        let mut c = create_test_cpu(&program);
+        let mapper:&mut LoggedAddressSpace =
+            unsafe { &mut *(c.mapper.deref_mut() as *mut AddressSpace as *mut LoggedAddressSpace) };
+        c.run_instructions(2);
+        assert_eq!(mapper.copy_log(), [
+            (0, AccessType::Read, ADDRESS_TEST_PROGRAM+0, 0xa9),
+            (1, AccessType::Read, ADDRESS_TEST_PROGRAM+1, 0x05),
+            (2, AccessType::Read, ADDRESS_TEST_PROGRAM+2, 0x8d),
+            (3, AccessType::Read, ADDRESS_TEST_PROGRAM+3, 0x00),
+            (4, AccessType::Read, ADDRESS_TEST_PROGRAM+4, 0x00),
+            (5, AccessType::Write, 0, 5)]
+        );
+
     }
 }
