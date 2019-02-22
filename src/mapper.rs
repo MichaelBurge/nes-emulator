@@ -1,3 +1,5 @@
+#![allow(unused_imports)]
+
 use std::cell::UnsafeCell;
 use std::borrow::BorrowMut;
 

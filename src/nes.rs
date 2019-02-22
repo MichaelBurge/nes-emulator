@@ -9,6 +9,7 @@ use crate::ppu::Ppu;
 use crate::ppu::CpuPpuInterconnect;
 use crate::ppu::PpuPort;
 use crate::ppu::PpuPort::*;
+use crate::ppu::PaletteControl;
 use crate::apu::ApuPort::*;
 use crate::mapper::{Mapper, Ram};
 use crate::joystick::Joystick;
@@ -20,7 +21,7 @@ use std::fmt;
 use std::ops::DerefMut;
 
 pub struct Nes {
-    cpu: C6502,
+    cpu: Box<C6502>,
     apu: Apu,
     pub ppu: Box<Ppu>,
 }
@@ -28,7 +29,7 @@ pub struct Nes {
 impl Nes {
     fn new(cpu_mapper: Box<AddressSpace>) -> Nes {
         return Nes {
-            cpu: C6502::new(cpu_mapper),
+            cpu: Box::new(C6502::new(cpu_mapper)),
             apu: Apu::new(),
             ppu: Box::new(Ppu::new()),
         };
@@ -135,12 +136,13 @@ impl Nes {
     fn map_nes_cpu(&mut self, joystick1: Box<AddressSpace>, joystick2: Box<AddressSpace>, cartridge: Box<AddressSpace>) {
         let mut mapper:Mapper = Mapper::new();
         let cpu_ram:Ram = Ram::new(0x800);
-        let cpu_ppu:CpuPpuInterconnect = CpuPpuInterconnect::new(self.ppu.deref_mut());
+        let cpu_ppu:CpuPpuInterconnect = CpuPpuInterconnect::new(self.ppu.deref_mut(), self.cpu.deref_mut());
         // https://wiki.nesdev.com/w/index.php/CPU_memory_map
         mapper.map_mirrored(0x0000, 0x07ff, 0x0000, 0x1fff, Box::new(cpu_ram), false);
         mapper.map_mirrored(0x2000, 0x2007, 0x2000, 0x3fff, Box::new(cpu_ppu), true);
-        // TODO - OAMDMA should initiate a memory transfer
-        mapper.map_null(0x4000, 0x4015); // APU/Joystick ports
+        mapper.map_null(0x4000, 0x4013); // APU/Joystick ports
+        mapper.map_address_space(0x4014, 0x4014, Box::new(cpu_ppu), true);
+        mapper.map_null(0x4015, 0x4015);
         mapper.map_address_space(0x4016, 0x4016, joystick1, false);
         mapper.map_address_space(0x4017, 0x4017, joystick2, false);
 
@@ -153,12 +155,12 @@ impl Nes {
         // https://wiki.nesdev.com/w/index.php/PPU_memory_map
         let mut mapper:Mapper = Mapper::new();
         let ppu_ram:Ram = Ram::new(0x800);
-        let palette_ram:Ram = Ram::new(0x20);
+        let palette_ram:PaletteControl = PaletteControl::new();
         // Pattern table
         mapper.map_address_space(0x0000, 0x1FFF, cartridge_ppu, true);
         // Nametables
         mapper.map_mirrored(0x2000, 0x27FF, 0x2000, 0x3EFF, Box::new(ppu_ram), false);
-        mapper.map_mirrored(0x3f00, 0x3f1f, 0x3f00, 0x3fff, Box::new(palette_ram), false);
+        mapper.map_mirrored(0x3f00, 0x3f1f, 0x3f00, 0x3fff, Box::new(palette_ram), true);
 
         self.ppu.mapper = Box::new(mapper);
     }

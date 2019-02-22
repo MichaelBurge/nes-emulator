@@ -35,7 +35,7 @@ pub struct C6502 {
     pub clocks: usize,
     debugger: C6502Debugger,
     pub is_tracing: bool,
-    clocks_to_pause: u8,
+    clocks_to_pause: u16,
 }
 
 impl C6502 {
@@ -497,7 +497,7 @@ impl Clocked for C6502 {
         self.execute_instruction(i);
         let debugger:&mut C6502Debugger = unsafe { transmute(&self.debugger) };
         debugger.on_step(&self, num_bytes, &i);
-        self.clocks_to_pause += i.num_clocks-1;
+        self.clocks_to_pause += (i.num_clocks as u16)-1;
         // TODO: Implement "oops cycle" for indexing modes that cross a page boundary.
     }
 }
@@ -531,6 +531,10 @@ impl C6502 {
 
     pub fn break_debugger(&mut self) {
         self.debugger.prompt();
+    }
+
+    pub fn pause(&mut self, num_clocks: u16) {
+        self.clocks_to_pause = num_clocks;
     }
 
     fn print_trace_line(&self, num_bytes:u16, i:&Instruction) {

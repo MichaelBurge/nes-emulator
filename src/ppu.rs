@@ -2,6 +2,8 @@
 
 use crate::common::*;
 use crate::mapper::{AddressSpace, Mapper};
+use crate::c6502::C6502;
+
 use std::mem::transmute;
 
 //use std::vec;
@@ -18,8 +20,7 @@ const ADDRESS_NAMETABLE0:u16 = 0x2000;
 const ADDRESS_ATTRIBUTE_TABLE0:u16 = 0x23C0;
 const NAMETABLE_SIZE:u16 = 0x0400;
 const ADDRESS_UNIVERSAL_BACKGROUND_COLOR:u16 = 0x3f00;
-const ADDRESS_BACKGROUND_PALETTE0:u16 = 0x3f01;
-const ADDRESS_SPRITE_PALETTE0:u16 = 0x3f11;
+const ADDRESS_BACKGROUND_PALETTE0:u16 = 0x3f00;
 const SPRITE_HEIGHT:u8 = 8;
 const SPRITE_WIDTH:u8 = 8;
 pub const RENDER_WIDTH:usize = 256;
@@ -99,13 +100,15 @@ struct Sprite {
     flip_vertical: bool,
 }
 
+#[derive(Copy, Clone)]
 pub struct CpuPpuInterconnect {
     ppu: *mut Ppu,
+    cpu: *mut C6502,
 }
 
 impl CpuPpuInterconnect {
-    pub fn new(ppu: &mut Ppu) -> CpuPpuInterconnect {
-        CpuPpuInterconnect { ppu: ppu }
+    pub fn new(ppu: &mut Ppu, cpu: &mut C6502) -> CpuPpuInterconnect {
+        CpuPpuInterconnect { ppu: ppu, cpu: cpu }
     }
 }
 
@@ -138,7 +141,8 @@ impl AddressSpace for CpuPpuInterconnect {
             Some(PPUSCROLL) => ppu.open_bus,
             Some(PPUADDR) => ppu.open_bus,
             Some(PPUDATA) => ppu.read_data(),
-            port => panic!("Unimplemented PPU Port {:?}", port),
+            Some(OAMDMA) => ppu.open_bus,
+            port => panic!("INVALID PPU PORT READ {:?} {:x}", port, ptr),
         }
     }
     fn poke(&mut self, ptr:u16, value:u8) {
@@ -153,10 +157,52 @@ impl AddressSpace for CpuPpuInterconnect {
             Some(PPUSCROLL) => ppu.write_scroll(value),
             Some(PPUADDR) => ppu.write_address(value),
             Some(PPUDATA) => ppu.write_data(value),
-            port => panic!("Unimplemented PPU Port {:?}", port),
+            Some(OAMDMA) => {
+                let cpu = unsafe { &mut *self.cpu };
+                let ptr_base = (value as u16) << 8;
+                for i in 0..=255 {
+                    let addr = ptr_base + i;
+                    let v = cpu.peek(addr);
+                    ppu.oam[ppu.oam_ptr as usize] = v;
+                    ppu.oam_ptr = ppu.oam_ptr.wrapping_add(1);
+                }
+            }
+            port => panic!("INVALID PPU PORT WRITE {:?} {:x} {:x}", port, ptr, value),
         }
     }
 }
+
+pub struct PaletteControl {
+    memory: [u8;32],
+}
+
+impl PaletteControl {
+    pub fn new() -> PaletteControl {
+        PaletteControl { memory: [0; 32 ] }
+    }
+    fn map_ptr(&self, ptr:u16) -> usize {
+        let remapped = match ptr {
+            0x3f10 => 0x3f00,
+            0x3f14 => 0x3f04,
+            0x3f18 => 0x3f08,
+            0x3f1c => 0x3f0c,
+            _ => ptr,
+        };
+        return (remapped - 0x3f00) as usize;
+    }
+}
+
+impl AddressSpace for PaletteControl {
+    fn peek(&self, ptr: u16) -> u8 {
+        let true_ptr = self.map_ptr(ptr);
+        return self.memory[true_ptr];
+    }
+    fn poke(&mut self, ptr: u16, v: u8) {
+        let true_ptr = self.map_ptr(ptr);
+        self.memory[true_ptr] = v;
+    }
+}
+
 #[derive(Copy, Clone)]
 enum PaletteType { Sprite, Background }
 
@@ -187,6 +233,7 @@ impl Clocked for Ppu {
         }
         self.scanline += 1;
         if self.scanline > SCANLINE_PRERENDER {
+            self.debug_print_attribute_table(0);
             self.scanline = 0;
         }
     }
@@ -287,7 +334,7 @@ impl Ppu {
                         // TODO: Horizontal/vertical flipping
                         let xsub = (x.wrapping_sub(sprite.x)) % 8;
                         // TODO: In 8x16 mode, use the next tile if ysub belongs in the lower half of the sprite.
-                        let ysub = (x.wrapping_sub(sprite.y)) % 8;
+                        let ysub = (y.wrapping_sub(sprite.y)) % 8;
                         let sprite_color = self.render_pattern_subpixel(sprite.tile_index, PaletteType::Sprite, sprite.palette, xsub, ysub);
                         // Sprite 0 test
                         if sprite.sprite_index == 0 &&
@@ -318,20 +365,16 @@ impl Ppu {
     fn render_pattern_subpixel(&self, tile_index: u8, palette_type: PaletteType, palette: u8, xsub: u8, ysub: u8) -> Option<SystemColor> {
         let color = self.lookup_pattern_color(palette_type, tile_index, xsub, ysub);
         if color == COLOR_TRANSPARENT { return None; }
-        let system_color = self.lookup_palette(palette, palette_type, color);
+        let system_color = self.lookup_palette(palette, color);
         return Some(system_color);
     }
 
-    fn lookup_palette(&self, palette: u8, palette_type: PaletteType, color: u8) -> SystemColor {
+    fn lookup_palette(&self, palette: u8, color: u8) -> SystemColor {
         // https://wiki.nesdev.com/w/index.php/PPU_palettes
-        let base_address =
-            match palette_type {
-                PaletteType::Sprite => ADDRESS_SPRITE_PALETTE0,
-                PaletteType::Background => ADDRESS_BACKGROUND_PALETTE0,
-            };
+        let base_address = ADDRESS_BACKGROUND_PALETTE0;
         let palette_size = 4;
-        let address:u16 = base_address + palette_size * (palette as u16) + ((color - 1) as u16);
-        return self.peek(address);
+        let address:u16 = base_address + palette_size * (palette as u16) + (color as u16);
+        return self.peek(address) & 0x3f;
     }
 
     fn lookup_pattern_color(&self, palette_type: PaletteType, tile_index: u8, xsub: u8, ysub: u8) -> PatternColor {
@@ -352,12 +395,12 @@ impl Ppu {
         let tile_row0 = self.peek(ptr_tile_row0);
         let tile_row1 = self.peek(ptr_tile_row1);
         let color =
-            get_bit(tile_row0, 7 - xsub) << 0 +
+            get_bit(tile_row0, 7 - xsub) << 0 |
             get_bit(tile_row1, 7 - xsub) << 1;
         return color;
     }
 
-    fn fetch_scanline_sprites(&self, y: u8) -> Vec<Sprite> {
+    fn fetch_scanline_sprites(&mut self, y: u8) -> Vec<Sprite> {
         let mut vec = Vec::new();
         for i in 0..64 {
             let sprite = self.lookup_sprite(i);
@@ -365,6 +408,7 @@ impl Ppu {
                 vec.push(sprite);
             }
             if vec.len() >= 8 {
+                self.sprite_overflow = true;
                 return vec;
             }
         }
@@ -373,7 +417,7 @@ impl Ppu {
 
     fn find_matching_sprite(&self, x: u8, sprites: &Vec<Sprite>) -> Option<Sprite> {
         for sprite in sprites {
-            if x >= sprite.x && x < (sprite.x + SPRITE_WIDTH) {
+            if x >= sprite.x && (x as u16) < (sprite.x as u16 + SPRITE_WIDTH as u16) {
                 return Some(sprite.clone());
             }
         }
@@ -386,7 +430,7 @@ impl Ppu {
             sprite_index: i as u8,
             y: self.oam[i*4 + 0],
             tile_index: self.oam[i*4 + 1],
-            palette: get_bit(attribute, 0) + get_bit(attribute, 1) << 1,
+            palette: (attribute & 3) + 4,
             is_front: get_bit(attribute, 5) == 0,
             flip_horizontal: get_bit(attribute, 6) > 0,
             flip_vertical: get_bit(attribute, 7) > 0,
@@ -399,18 +443,19 @@ impl Ppu {
     }
 
     fn lookup_tile(&self, x:u8, y:u8) -> (PatternId, PaletteId) {
+        // TODO - nametable_addr() in SprocketNES wraps with y=240. Does this matter?
         let nametable = 0; // TODO - Implement scrolling
-        let idx_x = (x/8) as u16;
-        let idx_y = (y/8) as u16;
+        let idx_x = x/8;
+        let idx_y = y/8;
 
         let tile = self.lookup_nametable(nametable, idx_x, idx_y);
-        let palette = self.lookup_attribute_table(nametable, x, y);
+        let palette = self.lookup_attribute_table(nametable, idx_x, idx_y);
 
         return (tile, palette);
     }
 
-    fn lookup_nametable(&self, nametable:u8, idx_x:u16, idx_y:u16) -> PatternId {
-        let idx = idx_y * 32 + idx_x;
+    fn lookup_nametable(&self, nametable:u8, idx_x:u8, idx_y:u8) -> PatternId {
+        let idx = (idx_y as u16) * 32 + (idx_x as u16);
         let ptr =
             ADDRESS_NAMETABLE0 +
             NAMETABLE_SIZE*(nametable as u16) +
@@ -418,21 +463,31 @@ impl Ppu {
         return self.peek(ptr);
     }
 
-    fn lookup_attribute_table(&self, nametable:u8, x:u8, y:u8) -> PaletteId {
-        let idx_x = x/8;
-        let idx_y = y/8;
+    fn lookup_attribute_table(&self, nametable:u8, idx_x:u8, idx_y:u8) -> PaletteId {
         let group = idx_y / 4 * 8 + idx_x/4;
-        let idx = (idx_y as u16) * 32 + (idx_x as u16);
         let ptr =
             ADDRESS_ATTRIBUTE_TABLE0 +
             NAMETABLE_SIZE*(nametable as u16) +
-            (idx as u16);
+            (group as u16);
         let entry = self.peek(ptr);
-        let quadrant = (idx_x % 4) / 2 + 2*((y % 4) / 2);
-        let palette_id =
-            get_bit(entry, quadrant*2) << 0 +
-            get_bit(entry, quadrant*2+1) << 1;
+        let (left, top) = ((idx_x % 4) < 2, (idx_y % 4) < 2);
+        let palette_id = match (left, top) {
+            (true,  true)  => (entry >> 0) & 0x3,
+            (false, true)  => (entry >> 2) & 0x3,
+            (true,  false) => (entry >> 4) & 0x3,
+            (false, false) => (entry >> 6) & 0x3,
+        };
+        //eprintln!("DEBUG - ATTRIBUTE ENTRY - {:x} {}", entry, palette_id);
         return palette_id;
+    }
+
+    fn debug_print_attribute_table(&self, nametable:u8) {
+        for idx_x in 0..=32 {
+            for idx_y in 0..=30 {
+                let palette_id = self.lookup_attribute_table(nametable, idx_x, idx_y);
+                //eprintln!("DEBUG - PALETTE ID - {} {} {}", idx_x, idx_y, palette_id);
+            }
+        }
     }
 
     pub fn write_control(&mut self, v:u8) {
@@ -484,16 +539,18 @@ impl Ppu {
         } else {
             self.scroll_x = v;
         }
-        self.address_latch_set = true;
+        self.address_latch_set = !self.address_latch_set;
     }
     pub fn write_address(&mut self, v:u8) {
         if self.address_latch_set {
+            self.vram_ptr &= 0xff00;
             self.vram_ptr |= (v as u16) << 0;
         } else {
-            self.vram_ptr  = (v as u16) << 8;
+            self.vram_ptr &= 0x00ff;
+            self.vram_ptr |= (v as u16) << 8;
         }
         eprintln!("DEBUG - PPU WRITE ADDRESS - {} {} {:x}", v, self.address_latch_set, self.vram_ptr);
-        self.address_latch_set = true;
+        self.address_latch_set = !self.address_latch_set;
     }
     pub fn read_data(&mut self) -> u8 {
         let ptr = self.vram_ptr;
@@ -501,7 +558,7 @@ impl Ppu {
     }
     pub fn write_data(&mut self, v:u8) {
         let ptr = self.vram_ptr;
-        eprintln!("DEBUG - PPU WRITE DATA - {}", v);
+        eprintln!("DEBUG - PPU WRITE DATA - {:x} {:x}", ptr, v);
         self.poke(ptr, v);
         let increment = self.vram_ptr_increment;
         self.vram_ptr = self.vram_ptr.wrapping_add(increment as u16);
