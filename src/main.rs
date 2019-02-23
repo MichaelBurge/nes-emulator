@@ -80,8 +80,8 @@ fn main() {
 }
 
 fn create_nes(joystick1:Box<AddressSpace>, joystick2:Box<AddressSpace>) -> Nes {
-    let filename = "roms/mario.nes";
     //let filename = "roms/donkey_kong.nes";
+    let filename = "roms/mario.nes";
     let rom = read_ines(filename.to_string()).unwrap();
     return load_ines(rom, joystick1, joystick2);
 }

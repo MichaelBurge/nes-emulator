@@ -56,7 +56,7 @@ impl C6502 {
             mapper: mapper,
             counter: 0,
             clocks: 0,
-            is_tracing: false,
+            is_tracing: true,
             debugger: C6502Debugger::new(),
             clocks_to_pause: 6, // For the initial ADDRESS_RESET fetch
         }

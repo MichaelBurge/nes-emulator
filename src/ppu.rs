@@ -23,6 +23,11 @@ const ADDRESS_UNIVERSAL_BACKGROUND_COLOR:u16 = 0x3f00;
 const ADDRESS_BACKGROUND_PALETTE0:u16 = 0x3f00;
 const SPRITE_HEIGHT:u8 = 8;
 const SPRITE_WIDTH:u8 = 8;
+const SCANLINE_PRERENDER:u16 = 261;
+const SCANLINE_RENDER:u16 = 0;
+const SCANLINE_POSTRENDER:u16 = 240;
+const SCANLINE_VBLANK:u16 = 241;
+
 pub const RENDER_WIDTH:usize = 256;
 pub const RENDER_HEIGHT:usize = 240;
 pub const RENDER_SIZE:usize = RENDER_WIDTH * RENDER_HEIGHT * 3;
@@ -34,9 +39,7 @@ pub struct Ppu {
     pub is_vblank_nmi: bool,
     pub is_scanline_irq: bool,
 
-    base_nametable: u8,
-    vram_ptr: u16, // PPUADDR
-    vram_ptr_increment: u8,
+    registers:PpuRegisters,
     sprite_pattern_table: bool, // Is the sprite pattern table the 'right' one?
     background_pattern_table: bool, // Is the background pattern table the right one?
     sprite_overflow: bool,
@@ -45,20 +48,8 @@ pub struct Ppu {
     frame_parity: bool, // Toggled every frame
     vblank: bool,
     open_bus: u8, // Open bus shared by all PPU registers
-    scroll_x: u8, // PPUSCROLL
-    scroll_y: u8,
-    address_latch_set: bool,
     ppu_master_select: bool,
     generate_vblank_nmi: bool,
-
-    is_greyscale: bool,
-    show_leftmost_background: bool,
-    show_leftmost_sprite: bool,
-    show_background: bool,
-    show_sprites: bool,
-    emphasize_red: bool,
-    emphasize_green: bool,
-    emphasize_blue: bool,
 
     oam_ptr: u8,
 
@@ -74,6 +65,228 @@ pub struct Ppu {
     next_pixel_reg2: u8,
     next_tile_attributes_reg: u8,
     next_tile_attributes_reg2: u8,
+}
+
+struct PpuRegisters {
+    // Register is only 15 bits in hardware.
+    /*
+    yyy NN YYYYY XXXXX
+    y = fine y scroll
+    N = nametable select
+    Y = coarse Y scroll
+    X = coarse X scroll
+     */
+    v: u16,
+    t: u16, // t is the address of the top-left onscreen tile
+    x: u8, // Fine x scroll
+    w: bool, // First-or-second write toggle(PPUSCROLL and PPUADDR)
+
+    vram_increment: bool, // false=increment by 1; true = increment by 32
+    is_greyscale: bool,
+    background_enabled: bool,
+    sprites_enabled: bool,
+    emphasize_red: bool,
+    emphasize_green: bool,
+    emphasize_blue: bool,
+    show_leftmost_background: bool,
+    show_leftmost_sprite: bool,
+}
+
+impl PpuRegisters {
+    // https://wiki.nesdev.com/w/index.php/PPU_scrolling
+    pub fn new() -> PpuRegisters {
+        PpuRegisters {
+            v: 0,
+            t: 0,
+            x: 0,
+            w: false,
+
+            vram_increment: false,
+            is_greyscale: false,
+            background_enabled: false,
+            sprites_enabled: false,
+            emphasize_red: false,
+            emphasize_green: false,
+            emphasize_blue: false,
+            show_leftmost_background: false,
+            show_leftmost_sprite: false,
+        }
+    }
+    pub fn prerender_copy(&mut self) {
+        let mask:u16 = 0b111101111100000;
+        self.v &= !mask;
+        self.v |= self.t & mask;
+    }
+    pub fn post_scanline_copy(&mut self) {
+        let mask:u16 = 0b10000011111;
+        self.v &= !mask;
+        self.v |= self.t & mask;
+    }
+    pub fn handle_scanline_x(&mut self, x:u16) {
+        let new_tile =
+            (x <= 256 && x > 0 && (x % 8) == 0) || false;
+        //(x == 328) ||
+           // (x == 336);
+        if new_tile {
+            self.coarse_x_increment();
+        }
+        if x == 256 {
+            self.y_increment();
+        }
+        if x == 257 {
+            self.reset_horizontal_position();
+        }
+    }
+    fn reset_horizontal_position(&mut self) {
+        let mask:u16 = 0b10000011111;
+        self.v &= !mask;
+        self.v |= self.t & mask;
+    }
+
+    pub fn coarse_x_increment(&mut self) {
+        let v = self.v;
+        if (self.v & 0x001F) == 31 {
+            self.v &= !0x001F;
+            self.v ^= 0x0400;
+        } else {
+            self.v = (self.v+1)& 0x7FFF;
+        }
+        //eprintln!("DEBUG - COARSE-X {:x} {:x}", v, self.v);
+        }
+    pub fn scanline(&self) -> u16 {
+        let coarse_y_mask:u16 =      0b1111100000;
+        let fine_y_mask:u16   = 0b111000000000000;
+        let y = (self.v & coarse_y_mask) >> 2 |
+                (self.v & fine_y_mask) >> 12;
+        return y;
+    }
+    pub fn y_increment(&mut self) {
+        let mut v = self.v;
+        if (v & 0x7000) != 0x7000 {
+            self.v += 0x1000;
+        } else {
+            v &= !0x7000;
+            let mut y:u16 = (v & 0x03e0) >> 5;
+            if y == 29 {
+                y = 0;
+                v ^= 0x0800;
+            } else if y == 31 {
+                y = 0;
+            } else {
+                y += 1;
+            }
+            self.v = (v & !0x03E0) | (y << 5);
+        }
+    }
+    pub fn write_control(&mut self, px:u8) {
+        let x = px as u16;
+        let mask:u16 = 0b110000000000;
+        self.t &= !mask;
+        self.t |= (x & 0x3) << 10;
+        self.vram_increment = get_bit(px, 2) > 0;
+        eprintln!("DEBUG - PPU CONTROL WRITE {:x} {}", px, self.vram_increment);
+    }
+
+    pub fn write_mask(&mut self, v:u8) {
+        self.is_greyscale = get_bit(v,0)>0;
+        self.show_leftmost_background = get_bit(v,1)>0;
+        self.show_leftmost_sprite = get_bit(v,2)>0;
+        self.background_enabled = get_bit(v,3)>0;
+        self.sprites_enabled = get_bit(v,4)>0;
+        self.emphasize_red = get_bit(v,5)>0;
+        self.emphasize_green = get_bit(v,6)>0;
+        self.emphasize_blue = get_bit(v,7)>0;
+    }
+
+    pub fn read_status(&mut self) {
+        self.w = false;
+    }
+    pub fn write_scroll(&mut self, px:u8) {
+        let x = px as u16;
+        if !self.w {
+            // First write
+            self.t &= !0b11111;
+            self.t |= x >> 3;
+            self.x = px & 0x7;
+        } else {
+            self.t &= !0b111001111100000;
+            self.t |= ((x >> 3) & 0x1F) << 5; // FED
+            self.t |= (x & 0x3) << 12; // CBA
+        }
+        self.w = !self.w;
+    }
+
+    pub fn write_address(&mut self, x:u8) {
+        if !self.w {
+            self.t &= 0x00FF;
+            self.t |= ((x & 0b00111111) as u16) << 8;
+        } else {
+            self.t &= 0xFF00;
+            self.t |= x as u16;
+            self.v = self.t;
+        }
+        self.w = !self.w;
+        eprintln!("DEBUG - PPU WRITE ADDRESS - {:x} {}", self.v, self.w);
+    }
+    fn is_rendering(&self) -> bool {
+        let scanline = self.scanline();
+        return self.is_rendering_enabled() &&
+            ((scanline == SCANLINE_PRERENDER) ||
+             scanline < SCANLINE_POSTRENDER
+             );
+    }
+    pub fn vram_ptr(&self) -> u16 {
+        return self.v;
+    }
+    pub fn is_sprites_enabled(&self) -> bool {
+        return self.sprites_enabled;
+    }
+    pub fn is_background_enabled(&self) -> bool {
+        return self.background_enabled;
+    }
+    pub fn is_rendering_enabled(&self) -> bool {
+        return self.sprites_enabled || self.background_enabled;
+    }
+
+    fn advance_vram_ptr(&mut self) {
+        // TODO - VRAM ptr is supposed to increment in a weird way during rendering.
+        if self.is_rendering() && false {
+            self.coarse_x_increment();
+            self.y_increment();
+        } else {
+            let increment = ternary(self.vram_increment, 32, 1);
+            eprintln!("DEBUG - VRAM INCREMENT - {} {}", self.vram_increment, increment);
+            self.v = self.v.wrapping_add(increment) & 0x3FFF;
+        }
+    }
+
+    pub fn fine_x(&self) -> u8 {
+        return self.x;
+    }
+
+    pub fn fine_y(&self) -> u8 {
+        return ((self.v >> 12) & 0x3) as u8;
+    }
+
+    pub fn tile_x(&self) -> u8 {
+        return (self.v & 0b11111) as u8;
+    }
+
+    pub fn tile_y(&self) -> u8 {
+        return ((self.v & 0b1111100000) >> 5) as u8;
+    }
+
+    pub fn tile_address(&self) -> u16 {
+        return ADDRESS_NAMETABLE0 | (self.v & 0x0FFF);
+    }
+    pub fn attribute_address(&self) -> u16 {
+        let v = self.v;
+        return ADDRESS_ATTRIBUTE_TABLE0 |
+        (v & 0x0c00) |
+        ((v >> 4) & 0x38) |
+        ((v >> 2) & 0x07)
+            ;
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -206,11 +419,6 @@ impl AddressSpace for PaletteControl {
 #[derive(Copy, Clone)]
 enum PaletteType { Sprite, Background }
 
-const SCANLINE_PRERENDER:u16 = 261;
-const SCANLINE_RENDER:u16 = 0;
-const SCANLINE_POSTRENDER:u16 = 240;
-const SCANLINE_VBLANK:u16 = 241;
-
 impl Clocked for Ppu {
     fn clock(&mut self) {
         // https://wiki.nesdev.com/w/index.php/PPU_rendering
@@ -250,9 +458,7 @@ impl Ppu {
             is_vblank_nmi: false,
             is_scanline_irq: false,
 
-            base_nametable: 0,
-            vram_ptr: 0,
-            vram_ptr_increment: 1,
+            registers: PpuRegisters::new(),
             sprite_pattern_table: false,
             background_pattern_table: false,
             sprite_overflow: false,
@@ -261,20 +467,8 @@ impl Ppu {
             frame_parity: false,
             vblank: false,
             open_bus: 0,
-            scroll_x: 0,
-            scroll_y: 0,
-            address_latch_set: false,
             ppu_master_select: false,
             generate_vblank_nmi: false,
-
-            is_greyscale: false,
-            show_leftmost_background: false,
-            show_leftmost_sprite: false,
-            show_background: false,
-            show_sprites: false,
-            emphasize_red: false,
-            emphasize_green: false,
-            emphasize_blue: false,
 
             oam_ptr: 0,
 
@@ -295,10 +489,11 @@ impl Ppu {
 
     pub fn render_scanline_prerender(&mut self) {
         if self.is_rendering_enabled() {
+            self.registers.prerender_copy();
             self.clocks_to_pause = ternary(self.frame_parity, 341, 340)-1;
             self.sprite0_hit = false;
-            // TODO - "During pixels 280 through 304 of this scanline, the vertical scroll bits are reloaded if rendering is enabled. "
-            // TODO - Make memory accesses that a regular scanline would
+            //self.registers.y_increment(); // x=256 action
+            //self.registers.reset_horizontal_position(); // x=257 action
         } else {
             self.clocks_to_pause = 341;
         }
@@ -319,22 +514,27 @@ impl Ppu {
 
     // https://wiki.nesdev.com/w/index.php/PPU_sprite_priority
     fn render_scanline(&mut self, y: u8) {
+        if ! self.is_rendering_enabled() {
+            return;
+        }
         let ptr_base = 256 * (y as usize);
         let global_background_color = self.lookup_global_background_color();
         // Each PPU clock cycle produces one pixel. The HBlank period is used to perform memory accesses.
         let sprites = self.fetch_scanline_sprites(y);
         for x in 0..=255 {
-
-            let (background_tile, background_palette) = self.lookup_tile(x,y);
+            self.registers.handle_scanline_x(x as u16);
+            let (background_tile, background_palette) = self.lookup_tile();
             let background_color = self.render_pattern_subpixel(background_tile, PaletteType::Background, background_palette, x % 8, y % 8);
             let (is_sprite_front, sprite_color) =
                 match self.find_matching_sprite(x, &sprites) {
                     None => (false, None),
                     Some(sprite) => {
                         // TODO: Horizontal/vertical flipping
-                        let xsub = (x.wrapping_sub(sprite.x)) % 8;
+                        let fine_x = self.registers.fine_x();
+                        let fine_y = 0; // self.registers.fine_y();
+                        let xsub = (x.wrapping_sub(sprite.x).wrapping_add(fine_x)) % 8;
                         // TODO: In 8x16 mode, use the next tile if ysub belongs in the lower half of the sprite.
-                        let ysub = (y.wrapping_sub(sprite.y)) % 8;
+                        let ysub = (y.wrapping_sub(sprite.y).wrapping_add(fine_y)) % 8;
                         let sprite_color = self.render_pattern_subpixel(sprite.tile_index, PaletteType::Sprite, sprite.palette, xsub, ysub);
                         // Sprite 0 test
                         if sprite.sprite_index == 0 &&
@@ -360,6 +560,21 @@ impl Ppu {
                 self.write_system_pixel(x, y, global_background_color);
             }
         }
+        self.registers.handle_scanline_x(256);
+        self.registers.handle_scanline_x(257);
+        self.registers.handle_scanline_x(328);
+        self.registers.handle_scanline_x(336);
+    }
+
+    fn is_sprites_enabled(&self) -> bool {
+        return self.registers.is_sprites_enabled();
+    }
+    fn is_background_enabled(&self) -> bool {
+        return self.registers.is_background_enabled();
+    }
+
+    fn is_rendering_enabled(&self) -> bool {
+        return self.registers.is_rendering_enabled();
     }
 
     fn render_pattern_subpixel(&self, tile_index: u8, palette_type: PaletteType, palette: u8, xsub: u8, ysub: u8) -> Option<SystemColor> {
@@ -442,34 +657,19 @@ impl Ppu {
         return self.peek(ADDRESS_UNIVERSAL_BACKGROUND_COLOR);
     }
 
-    fn lookup_tile(&self, x:u8, y:u8) -> (PatternId, PaletteId) {
-        // TODO - nametable_addr() in SprocketNES wraps with y=240. Does this matter?
-        let nametable = 0; // TODO - Implement scrolling
-        let idx_x = x/8;
-        let idx_y = y/8;
-
-        let tile = self.lookup_nametable(nametable, idx_x, idx_y);
-        let palette = self.lookup_attribute_table(nametable, idx_x, idx_y);
+    fn lookup_tile(&self) -> (PatternId, PaletteId) {
+        let tile_addr = self.registers.tile_address();
+        let tile = self.peek(tile_addr);
+        let palette = self.lookup_attribute_table();
 
         return (tile, palette);
     }
 
-    fn lookup_nametable(&self, nametable:u8, idx_x:u8, idx_y:u8) -> PatternId {
-        let idx = (idx_y as u16) * 32 + (idx_x as u16);
-        let ptr =
-            ADDRESS_NAMETABLE0 +
-            NAMETABLE_SIZE*(nametable as u16) +
-            (idx as u16);
-        return self.peek(ptr);
-    }
-
-    fn lookup_attribute_table(&self, nametable:u8, idx_x:u8, idx_y:u8) -> PaletteId {
-        let group = idx_y / 4 * 8 + idx_x/4;
-        let ptr =
-            ADDRESS_ATTRIBUTE_TABLE0 +
-            NAMETABLE_SIZE*(nametable as u16) +
-            (group as u16);
+    fn lookup_attribute_table(&self) -> PaletteId {
+        let ptr = self.registers.attribute_address();
         let entry = self.peek(ptr);
+        let idx_x = self.registers.tile_x();
+        let idx_y = self.registers.tile_y();
         let (left, top) = ((idx_x % 4) < 2, (idx_y % 4) < 2);
         let palette_id = match (left, top) {
             (true,  true)  => (entry >> 0) & 0x3,
@@ -482,32 +682,25 @@ impl Ppu {
     }
 
     fn debug_print_attribute_table(&self, nametable:u8) {
-        for idx_x in 0..=32 {
-            for idx_y in 0..=30 {
-                let palette_id = self.lookup_attribute_table(nametable, idx_x, idx_y);
-                //eprintln!("DEBUG - PALETTE ID - {} {} {}", idx_x, idx_y, palette_id);
-            }
-        }
+        // for idx_x in 0..=32 {
+        //     for idx_y in 0..=30 {
+        //         let palette_id = self.lookup_attribute_table(nametable, idx_x, idx_y);
+        //         //eprintln!("DEBUG - PALETTE ID - {} {} {}", idx_x, idx_y, palette_id);
+        //     }
+        // }
     }
 
     pub fn write_control(&mut self, v:u8) {
-        self.base_nametable = v & 0b11;
-        self.vram_ptr_increment = ternary(get_bit(v, 2) > 0, 32, 1);
+        self.registers.write_control(v);
         self.sprite_pattern_table = get_bit(v, 3)>0;
         self.background_pattern_table = get_bit(v,4)>0;
         self.sprite_size = get_bit(v,5)>0;
         self.ppu_master_select = get_bit(v,6)>0;
         self.generate_vblank_nmi = get_bit(v,7)>0;
     }
+
     pub fn write_mask(&mut self, v:u8) {
-        self.is_greyscale = get_bit(v,0)>0;
-        self.show_leftmost_background = get_bit(v,1)>0;
-        self.show_leftmost_sprite = get_bit(v,2)>0;
-        self.show_background = get_bit(v,3)>0;
-        self.show_sprites = get_bit(v,4)>0;
-        self.emphasize_red = get_bit(v,5)>0;
-        self.emphasize_green = get_bit(v,6)>0;
-        self.emphasize_blue = get_bit(v,7)>0;
+        self.registers.write_mask(v);
     }
 
     pub fn read_status(&mut self) -> u8 {
@@ -518,7 +711,7 @@ impl Ppu {
             ((self.vblank as u8) << 7)
             ;
         self.set_vblank(false);
-        self.address_latch_set = false;
+        self.registers.read_status();
         return ret;
     }
     pub fn write_oam_address(&mut self, v:u8) {
@@ -534,40 +727,21 @@ impl Ppu {
         self.oam_ptr = self.oam_ptr.wrapping_add(1);
     }
     pub fn write_scroll(&mut self, v:u8) {
-        if self.address_latch_set {
-            self.scroll_y = v;
-        } else {
-            self.scroll_x = v;
-        }
-        self.address_latch_set = !self.address_latch_set;
+        self.registers.write_scroll(v);
     }
     pub fn write_address(&mut self, v:u8) {
-        if self.address_latch_set {
-            self.vram_ptr &= 0xff00;
-            self.vram_ptr |= (v as u16) << 0;
-        } else {
-            self.vram_ptr &= 0x00ff;
-            self.vram_ptr |= (v as u16) << 8;
-        }
-        eprintln!("DEBUG - PPU WRITE ADDRESS - {} {} {:x}", v, self.address_latch_set, self.vram_ptr);
-        self.address_latch_set = !self.address_latch_set;
+        self.registers.write_address(v);
     }
     pub fn read_data(&mut self) -> u8 {
-        let ptr = self.vram_ptr;
+        let ptr = self.registers.vram_ptr();
+        self.registers.advance_vram_ptr();
         return self.peek(ptr);
     }
     pub fn write_data(&mut self, v:u8) {
-        let ptr = self.vram_ptr;
-        eprintln!("DEBUG - PPU WRITE DATA - {:x} {:x}", ptr, v);
+        let ptr = self.registers.vram_ptr();
+        self.registers.advance_vram_ptr();
+        eprintln!("DEBUG - PPU WRITE DATA - {:x} {:x} {:x}", ptr, v, self.registers.vram_ptr());
         self.poke(ptr, v);
-        let increment = self.vram_ptr_increment;
-        self.vram_ptr = self.vram_ptr.wrapping_add(increment as u16);
-    }
-    pub fn is_rendering_complete(&self) -> bool {
-        return self.scanline >= 240;
-    }
-    pub fn is_rendering_enabled(&self) -> bool {
-        return self.show_background || self.show_sprites;
     }
     fn lookup_system_pixel(&self, i: SystemColor) -> RgbColor {
         return SYSTEM_PALETTE[i as usize];
