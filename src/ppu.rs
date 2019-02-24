@@ -592,13 +592,13 @@ impl Ppu {
         let attribute = self.tile_attribute;
         let idx_x = self.registers.tile_x();
         let idx_y = self.registers.tile_y();
-        let palette = self.split_attribute_entry(attribute, idx_x, idx_y);
+        let palette = self.split_attribute_entry(attribute, idx_x, idx_y) as u16;
         let pattern_low = self.tile_pattern_low;
         let pattern_high = self.tile_pattern_high;
         self.tile_pattern_low_shift |= (pattern_low as u16);
         self.tile_pattern_high_shift |= (pattern_high as u16);
-        self.tile_palette_shift >>= 8;
-        self.tile_palette_shift |= (palette as u16) << 8;
+        self.tile_palette_shift <<= 2;
+        self.tile_palette_shift |= palette;
     }
 
     fn fetch_bg_tile(&mut self) {
@@ -624,7 +624,8 @@ impl Ppu {
         let low = (((self.tile_pattern_low_shift << fine_x) & 0x8000)>0) as u8;
         let high = (((self.tile_pattern_high_shift << fine_x) & 0x8000)>0) as u8;
         let color = low | (high << 1);
-        let palette = self.tile_palette_shift & 0xff;
+        let x = self.cycle-1;
+        let palette = (self.tile_palette_shift >> ternary((x%8 + fine_x)> 7, 0, 2))&0x3;
         return PaletteColor::new_from_parts(palette as u8, color as u8);
     }
 
