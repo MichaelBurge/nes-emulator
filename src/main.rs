@@ -26,7 +26,7 @@ use crate::ppu::*;
 
 // https://wiki.nesdev.com/w/index.php/Cycle_reference_chart
 const CLOCKS_PER_FRAME:u32 = 29780;
-const SCALE:usize = 2;
+const SCALE:usize = 4;
 
 fn main() {
     let sdl_context = sdl2::init().unwrap();
@@ -80,8 +80,8 @@ fn main() {
 }
 
 fn create_nes(joystick1:Box<AddressSpace>, joystick2:Box<AddressSpace>) -> Nes {
-    //let filename = "roms/donkey_kong.nes";
-    let filename = "roms/mario.nes";
+    let filename = "roms/donkey_kong.nes";
+    //let filename = "roms/mario.nes";
     let rom = read_ines(filename.to_string()).unwrap();
     return load_ines(rom, joystick1, joystick2);
 }

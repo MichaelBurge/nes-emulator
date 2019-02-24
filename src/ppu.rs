@@ -13,6 +13,8 @@ type PatternColor = u8; // [0,4)
 type PatternId = u8;
 type PaletteId = u8; // [0, 4)
 type TileIndex = u8;
+type Attribute = u8; // An entry in the attribute table
+type SpriteId = u8;
 
 const COLOR_TRANSPARENT:u8 = 0;
 
@@ -27,6 +29,7 @@ const SCANLINE_PRERENDER:u16 = 261;
 const SCANLINE_RENDER:u16 = 0;
 const SCANLINE_POSTRENDER:u16 = 240;
 const SCANLINE_VBLANK:u16 = 241;
+const GLOBAL_BACKGROUND_COLOR:PaletteColor = PaletteColor { color: 0 };
 
 pub const RENDER_WIDTH:usize = 256;
 pub const RENDER_HEIGHT:usize = 240;
@@ -44,9 +47,8 @@ pub struct Ppu {
     background_pattern_table: bool, // Is the background pattern table the right one?
     sprite_overflow: bool,
     sprite0_hit: bool,
-    sprite_size: bool,
+    sprite_size: bool, // false=8x8, true=8x16
     frame_parity: bool, // Toggled every frame
-    vblank: bool,
     open_bus: u8, // Open bus shared by all PPU registers
     ppu_master_select: bool,
     generate_vblank_nmi: bool,
@@ -54,14 +56,25 @@ pub struct Ppu {
 
     oam_ptr: u8,
 
-    // Lift state in the render loop to PPU-level registers to allow running a render clock-by-clock.
-    /* clocks_to_pause causes the PPU to do nothing for X clocks. This should be unnecessary in a
-       clock-accurate emulation. However, this emulator may choose to "batch" the actions of many clocks
-       all at once, and fill the remaining clocks with do-nothing operations. */
-    clocks_to_pause: u16,
+    clocks_until_nmi: u8,
+    nmi_occurred: bool,
+    frame: u32,
     scanline: u16,
-    tile_idx_shift: u16,
-    tile_attribute_shift: u16,
+    cycle: u16,
+    sprite_count: u8,
+    tile_pattern_low_shift: u16,
+    tile_pattern_high_shift: u16,
+    tile_palette_shift: u16,
+    // Used to store fetched tile attributes until they're stored in cycles 0 mod 8.
+    tile_nametable: u8,
+    tile_attribute: u8,
+    tile_pattern_low: u8,
+    tile_pattern_high: u8,
+    sprite_patterns: [u16;8],
+    sprite_palettes: [u8;8],
+    sprite_xs: [u8;8],
+    sprite_priorities: [bool;8],
+    sprite_indices: [u8;8],
 }
 
 struct PpuRegisters {
@@ -109,29 +122,15 @@ impl PpuRegisters {
             show_leftmost_sprite: false,
         }
     }
-    pub fn prerender_copy(&mut self) {
+    pub fn copy_y(&mut self) {
         let mask:u16 = 0b111101111100000;
         self.v &= !mask;
         self.v |= self.t & mask;
     }
-    pub fn post_scanline_copy(&mut self) {
-        let mask:u16 = 0b10000011111;
+    pub fn copy_x(&mut self) {
+        let mask:u16 =     0b10000011111;
         self.v &= !mask;
         self.v |= self.t & mask;
-    }
-    pub fn handle_scanline_x(&mut self, x:u16) {
-        if x == 256 {
-            self.y_increment();
-        }
-        if x == 257 {
-            self.reset_horizontal_position();
-        }
-        // if x == 328 {
-        //     self.shift_new_tile();
-        // }
-        // if x == 336 {
-        //     self.shift_new_tile();
-        // }
     }
     fn reset_horizontal_position(&mut self) {
         let mask:u16 = 0b10000011111;
@@ -139,7 +138,7 @@ impl PpuRegisters {
         self.v |= self.t & mask;
     }
 
-    pub fn coarse_x_increment(&mut self) {
+    pub fn increment_x(&mut self) {
         let v = self.v;
         if (self.v & 0x001F) == 31 {
             self.v &= !0x001F;
@@ -156,7 +155,7 @@ impl PpuRegisters {
                 (self.v & fine_y_mask) >> 12;
         return y;
     }
-    pub fn y_increment(&mut self) {
+    pub fn increment_y(&mut self) {
         let mut v = self.v;
         if (v & 0x7000) != 0x7000 {
             self.v += 0x1000;
@@ -184,6 +183,7 @@ impl PpuRegisters {
     }
 
     pub fn write_mask(&mut self, v:u8) {
+        eprintln!("DEBUG - PPU MASK WRITE {:x}", v);
         self.is_greyscale = get_bit(v,0)>0;
         self.show_leftmost_background = get_bit(v,1)>0;
         self.show_leftmost_sprite = get_bit(v,2)>0;
@@ -247,8 +247,8 @@ impl PpuRegisters {
     fn advance_vram_ptr(&mut self) {
         // TODO - VRAM ptr is supposed to increment in a weird way during rendering.
         if self.is_rendering() && false {
-            self.coarse_x_increment();
-            self.y_increment();
+            self.increment_x();
+            self.increment_y();
         } else {
             let increment = ternary(self.vram_increment, 32, 1);
             eprintln!("DEBUG - VRAM INCREMENT - {} {}", self.vram_increment, increment);
@@ -261,7 +261,7 @@ impl PpuRegisters {
     }
 
     pub fn fine_y(&self) -> u8 {
-        return ((self.v >> 12) & 0x3) as u8;
+        return ((self.v >> 12) & 0x7) as u8;
     }
 
     pub fn tile_x(&self) -> u8 {
@@ -299,7 +299,7 @@ impl AddressSpace for Ppu {
 
 #[derive(Copy, Clone)]
 struct Sprite {
-    sprite_index:u8,
+    index:u8,
     x: u8,
     y: u8,
     tile_index: u8,
@@ -307,6 +307,27 @@ struct Sprite {
     is_front: bool, // priority
     flip_horizontal: bool,
     flip_vertical: bool,
+}
+
+/* a=ABCDEFGH, b=12345678, combine_bitplanes(a,b) = A1B2C3D4E5F6G7H8 */
+fn combine_bitplanes(mut a:u8, mut b:u8) -> u16 {
+    let mut out = 0u16;
+    for i in 0..8 {
+        out |= (((a&1)<<1 | (b&1)) as u16)<<(i*2);
+        a >>= 1;
+        b >>= 1;
+    }
+    return out;
+}
+
+fn reverse_bits(mut a:u8) -> u8 {
+    let mut out = 0u8;
+    for i in 0..8 {
+        out <<= 1;
+        out |= a&1;
+        a >>= 1;
+    }
+    return out;
 }
 
 #[derive(Copy, Clone)]
@@ -416,31 +437,104 @@ impl AddressSpace for PaletteControl {
 enum PaletteType { Sprite, Background }
 
 impl Clocked for Ppu {
+    // High-level pattern here taken from https://github.com/fogleman/nes/blob/master/nes/ppu.go
     fn clock(&mut self) {
         // https://wiki.nesdev.com/w/index.php/PPU_rendering
-        if self.clocks_to_pause > 0 {
-            self.clocks_to_pause -= 1;
-            return;
+        self.tick_counters();
+
+        let is_visible_line = self.scanline < 240;
+        let is_visible_cycle = self.cycle >= 1 && self.cycle <= 256;
+        let is_fetch_line = self.scanline == SCANLINE_PRERENDER || is_visible_line;
+        let is_prefetch_cycle = self.cycle >= 321 && self.cycle <= 336;
+        let is_fetch_cycle = is_prefetch_cycle || is_visible_cycle;
+
+        //eprintln!("DEBUG - CYCLE - {} {} {} {} {} {}", self.cycle, self.scanline, self.frame, self.is_rendering_enabled(), is_visible_line, is_visible_cycle);
+        // Background logic
+        if self.is_rendering_enabled() {
+            if is_visible_line && is_visible_cycle {
+                self.render_pixel();
+            }
+            if is_fetch_line && is_fetch_cycle {
+                self.shift_registers();
+                match self.cycle % 8 {
+                    0 => self.shift_new_tile(),
+                    1 => self.fetch_bg_tile(),
+                    3 => self.fetch_bg_attribute(),
+                    5 => self.fetch_bg_pattern_low(),
+                    7 => self.fetch_bg_pattern_high(),
+                    _ => {},
+                }
+            }
+            if self.scanline == SCANLINE_PRERENDER && self.cycle >= 280 && self.cycle <= 304 {
+                self.registers.copy_y();
+            }
+            if is_fetch_line {
+                if is_fetch_cycle && self.cycle%8 == 0 {
+                    self.registers.increment_x();
+                }
+                if self.cycle == 256 {
+                    self.registers.increment_y();
+                }
+                if self.cycle == 257 {
+                    self.registers.copy_x();
+                }
+            }
         }
-        let scanline = self.scanline;
-        if scanline == 261 {
-            self.render_scanline_prerender();
-        } else if scanline < SCANLINE_POSTRENDER {
-            self.render_scanline(scanline as u8);
-            self.clocks_to_pause = 341;
-        } else if scanline == SCANLINE_POSTRENDER {
-            self.render_scanline_postrender();
-            self.clocks_to_pause = 341;
-        } else {
-            self.render_scanline_vblank();
-            self.clocks_to_pause = 341;
+
+        // Sprite logic
+        if self.is_rendering_enabled() {
+            if self.cycle == 257 {
+                if is_visible_line {
+                    self.evaluate_sprites();
+                } else {
+                    self.sprite_count = 0;
+                }
+            }
         }
-        self.scanline += 1;
-        if self.scanline > SCANLINE_PRERENDER {
-            self.debug_print_attribute_table(0);
-            self.scanline = 0;
+        // Vblank
+        if self.scanline == 241 && self.cycle == 1 {
+            eprintln!("DEBUG - VBLANK HIT - {}", self.generate_vblank_nmi);
+            self.set_vblank(true);
+        }
+        if self.scanline == SCANLINE_PRERENDER && self.cycle == 1 {
+            self.set_vblank(false);
+            self.sprite0_hit = false;
+            self.sprite_overflow = false;
         }
     }
+}
+
+#[derive(Debug)]
+struct PaletteColor {
+    color:u8,
+}
+
+impl PaletteColor {
+    pub fn new_from_parts(palette:u8, color:u8) -> PaletteColor {
+        PaletteColor {
+            color: (palette*4 + color),
+        }
+    }
+    pub fn address(&self) -> u16 {
+        // https://wiki.nesdev.com/w/index.php/PPU_palettes
+        let base_address = ADDRESS_BACKGROUND_PALETTE0;
+        let palette_size = 4;
+        let address:u16 = base_address + palette_size * (self.palette() as u16) + (self.palette_color() as u16);
+        address
+    }
+    pub fn palette(&self) -> u8 {
+        return self.color / 4;
+    }
+    pub fn palette_color(&self) -> u8 {
+        return self.color % 4;
+    }
+    pub fn is_transparent(&self) -> bool {
+        return self.palette_color() == 0;
+    }
+    pub fn is_opaque(&self) -> bool {
+        return ! self.is_transparent();
+    }
+
 }
 
 // https://wiki.nesdev.com/w/index.php/PPU_rendering
@@ -461,7 +555,6 @@ impl Ppu {
             sprite0_hit: false,
             sprite_size: false,
             frame_parity: false,
-            vblank: false,
             open_bus: 0,
             ppu_master_select: false,
             generate_vblank_nmi: false,
@@ -469,10 +562,24 @@ impl Ppu {
 
             oam_ptr: 0,
 
-            clocks_to_pause: 0,
+            clocks_until_nmi: 0,
+            nmi_occurred: false,
+            frame: 0,
             scanline: 0,
-            tile_idx_shift: 0,
-            tile_attribute_shift: 0,
+            cycle: 0,
+            sprite_count: 0,
+            tile_pattern_low_shift: 0,
+            tile_pattern_high_shift: 0,
+            tile_palette_shift: 0,
+            tile_nametable: 0,
+            tile_attribute: 0,
+            tile_pattern_low: 0,
+            tile_pattern_high: 0,
+            sprite_patterns: [0;8],
+            sprite_palettes: [0;8],
+            sprite_xs: [0;8],
+            sprite_priorities: [false;8],
+            sprite_indices: [0;8],
         }
     }
 
@@ -480,119 +587,132 @@ impl Ppu {
         buf.copy_from_slice(&self.display[0..RENDER_SIZE]);
     }
 
-    pub fn render_scanline_prerender(&mut self) {
-        if self.is_rendering_enabled() {
-            self.registers.prerender_copy();
-            self.clocks_to_pause = ternary(self.frame_parity, 341, 340)-1;
-            self.sprite0_hit = false;
-            self.shift_new_tile();
-
-            self.shift_new_tile();
-            // self.registers.y_increment(); // x=256 action
-            self.registers.reset_horizontal_position(); // x=257 action
-        } else {
-            self.clocks_to_pause = 341;
-        }
+    fn shift_new_tile(&mut self) {
+        let background_tile = self.tile_nametable;
+        let attribute = self.tile_attribute;
+        let idx_x = self.registers.tile_x();
+        let idx_y = self.registers.tile_y();
+        let palette = self.split_attribute_entry(attribute, idx_x, idx_y);
+        let pattern_low = self.tile_pattern_low;
+        let pattern_high = self.tile_pattern_high;
+        self.tile_pattern_low_shift |= (pattern_low as u16);
+        self.tile_pattern_high_shift |= (pattern_high as u16);
+        self.tile_palette_shift >>= 8;
+        self.tile_palette_shift |= (palette as u16) << 8;
     }
 
-    pub fn render_scanline_vblank(&mut self) {
-        if self.scanline == 241 {
-            eprintln!("DEBUG - VBLANK HIT - {}", self.generate_vblank_nmi);
-            self.set_vblank(true);
-            if self.generate_vblank_nmi {
+    fn fetch_bg_tile(&mut self) {
+        let tile_address = self.registers.tile_address();
+        self.tile_nametable = self.peek(tile_address);
+    }
+    fn fetch_bg_attribute(&mut self) {
+        let address = self.registers.attribute_address();
+        self.tile_attribute = self.peek(address);
+    }
+    fn fetch_bg_pattern_low(&mut self) {
+        let (ptr_low, _) = self.locate_pattern_row(PaletteType::Background, self.tile_nametable, self.registers.fine_y());
+        self.tile_pattern_low = self.peek(ptr_low);
+
+    }
+    fn fetch_bg_pattern_high(&mut self) {
+        let (_, ptr_high) = self.locate_pattern_row(PaletteType::Background, self.tile_nametable, self.registers.fine_y());
+        self.tile_pattern_high = self.peek(ptr_high);
+    }
+
+    fn fetch_tile_color_from_shift(&mut self) -> PaletteColor {
+        let fine_x = self.registers.fine_x() as u16;
+        let low = (((self.tile_pattern_low_shift << fine_x) & 0x8000)>0) as u8;
+        let high = (((self.tile_pattern_high_shift << fine_x) & 0x8000)>0) as u8;
+        let color = low | (high << 1);
+        let palette = self.tile_palette_shift & 0xff;
+        return PaletteColor::new_from_parts(palette as u8, color as u8);
+    }
+
+    fn shift_registers(&mut self) {
+        self.tile_pattern_low_shift <<= 1;
+        self.tile_pattern_high_shift <<= 1;
+    }
+
+    fn tick_counters(&mut self) {
+        if self.clocks_until_nmi > 0 {
+            self.clocks_until_nmi -= 1;
+            if self.clocks_until_nmi == 0 && self.generate_vblank_nmi && self.nmi_occurred {
                 self.is_vblank_nmi = true;
             }
         }
-    }
-
-    pub fn render_scanline_postrender(&mut self) {
-    }
-
-    fn shift_new_tile(&mut self) {
-        let tile_address = self.registers.tile_address();
-        let background_tile = self.peek(tile_address);
-        let palette = self.lookup_attribute_table();
-        self.tile_idx_shift >>= 8;
-        self.tile_idx_shift |= (background_tile as u16) << 8;
-        self.tile_attribute_shift >>= 8;
-        self.tile_attribute_shift |= (palette as u16) << 8;
-        self.registers.coarse_x_increment();
-    }
-
-    fn fetch_tile_from_shift(&self, x:u16, y:u16) -> (TileIndex, PaletteId, u8, u8) {
-        let fine_x = self.registers.fine_x() as u16;
-        let use_next_tile = (x%8 + fine_x) > 7;
-        let tile_id = (self.tile_idx_shift >> ternary(use_next_tile,8,0))&0xff;
-        let palette = (self.tile_attribute_shift >> ternary(use_next_tile,8,0))&0x3;
-        let xsub = (x + fine_x as u16) % 8;
-        return (tile_id as u8, palette as u8, xsub as u8, y as u8 % 8);
-    }
-
-    // https://wiki.nesdev.com/w/index.php/PPU_sprite_priority
-    fn render_scanline(&mut self, scanline: u8) {
-        if ! self.is_rendering_enabled() {
-            return;
+        if self.is_rendering_enabled() {
+            if self.frame_parity && self.scanline == 261 && self.cycle == 339 {
+                self.cycle = 0;
+                self.scanline = 0;
+                self.frame += 1;
+                self.frame_parity = !self.frame_parity;
+                return;
+            }
         }
-        let global_background_color = self.lookup_global_background_color();
-        let y = self.scanline as u16;
-        // Each PPU clock cycle produces one pixel. The HBlank period is used to perform memory accesses.
-        let sprites = self.fetch_scanline_sprites(y);
-        for x in 0u16..=255 {
-            self.registers.handle_scanline_x(x);
-
-            let (background_tile, background_palette, tile_xsub, tile_ysub) = self.fetch_tile_from_shift(x, y);
-            if (x % 8) == 7 {
-                self.shift_new_tile();
+        self.cycle += 1;
+        if self.cycle > 340 {
+            self.cycle = 0;
+            self.scanline += 1;
+            if self.scanline > 261 {
+                self.scanline = 0;
+                self.frame += 1;
+                self.frame_parity = !self.frame_parity;
             }
+        }
+    }
 
-            let background_color = self.render_pattern_subpixel(background_tile, PaletteType::Background, background_palette, tile_xsub, tile_ysub);
-            let mut is_sprite_front = false;
-            let mut sprite_color = None;
-            for sprite in &sprites {
-                if x >= (sprite.x as u16) && x < (sprite.x as u16 + SPRITE_WIDTH as u16) {
-                    let xsub = (x.wrapping_sub(sprite.x as u16)) % 8;
-                    let xsub = ternary(sprite.flip_horizontal, 7 - xsub, xsub);
-                    // TODO: In 8x16 mode, use the next tile if ysub belongs in the lower half of the sprite.
-                    let ysub = (y.wrapping_sub(sprite.y as u16)) % 8;
-                    let ysub = ternary(sprite.flip_vertical, 7 - ysub, ysub);
-                    let this_sprite_color = self.render_pattern_subpixel(sprite.tile_index, PaletteType::Sprite, sprite.palette, xsub as u8, ysub as u8);
-                    // Sprite 0 test
-                    if sprite.sprite_index == 0 &&
-                        this_sprite_color.is_some() &&
-                        background_color.is_some() {
-                            self.sprite0_hit = true;
-                        }
-                    if this_sprite_color.is_none() {
-                        continue;
-                    }
-
-                    is_sprite_front = sprite.is_front;
-                    sprite_color = this_sprite_color;
-                }
-            }
-
-        //let y = (y.wrapping_sub(self.registers.fine_y() as u16));
-            if is_sprite_front && sprite_color.is_some() {
-                // eprintln!("DEBUG - SPRITEF - {}", sprite_color.unwrap());
-                self.write_system_pixel(x, y, sprite_color.unwrap());
-            } else if background_color.is_some() {
-                // eprintln!("DEBUG - BACKGROUND - {}", background_color.unwrap());
-                self.write_system_pixel(x, y, background_color.unwrap());
-            } else if sprite_color.is_some() {
-                // eprintln!("DEBUG - SPRITEB - {}", sprite_color.unwrap());
-                self.write_system_pixel(x, y, sprite_color.unwrap());
+    fn render_pixel(&mut self) {
+        let x = self.cycle-1;
+        let y = self.scanline;
+        let bg_color = self.background_pixel();
+        let (i, sprite_color) = self.sprite_pixel();
+        // Sprite 0 test
+        if self.sprite_indices[i as usize] == 00 && sprite_color.is_opaque() && bg_color.is_opaque() {
+            self.sprite0_hit = true;
+        }
+        // Determine display color
+        let color =
+            if self.sprite_priorities[i as usize] && sprite_color.is_opaque() {
+                sprite_color
+            } else if bg_color.is_opaque() {
+                bg_color
+            } else if sprite_color.is_opaque() {
+                sprite_color
             } else {
-                self.write_system_pixel(x, y, global_background_color);
-            }
-        }
-        self.registers.handle_scanline_x(256);
-        self.registers.handle_scanline_x(257);
-        self.shift_new_tile();
-        self.shift_new_tile();
-        // self.registers.handle_scanline_x(328);
-        // self.registers.handle_scanline_x(336);
+                GLOBAL_BACKGROUND_COLOR
+            };
+        // eprintln!("DEBUG - COLOR - {:?}", color);
+        let system_color = self.peek(color.address());
+        self.write_system_pixel(x,y,system_color);
     }
 
+    fn background_pixel(&mut self) -> PaletteColor {
+        if !self.is_background_enabled() {
+            return GLOBAL_BACKGROUND_COLOR;
+        }
+        return self.fetch_tile_color_from_shift();
+    }
+    fn sprite_pixel(&mut self) -> (u8, PaletteColor) {
+        if !self.is_sprites_enabled() {
+            return (0, GLOBAL_BACKGROUND_COLOR);
+        }
+        let x = self.cycle-1;
+        for i in 0..self.sprite_count as usize {
+            let spritex = self.sprite_xs[i];
+            let xsub = x as i16 - spritex as i16;
+            if xsub < 0 || xsub > 7 {
+                continue;
+            }
+            let palette = self.sprite_palettes[i];
+            let color = (self.sprite_patterns[i] >> ((7 - xsub) * 2)) & 0x3;
+            let palette_color = PaletteColor::new_from_parts(palette, color as u8);
+            if palette_color.is_transparent() {
+                continue;
+            }
+            return (i as u8, palette_color);
+        }
+        return (0,GLOBAL_BACKGROUND_COLOR);
+    }
     fn is_sprites_enabled(&self) -> bool {
         return self.registers.is_sprites_enabled();
     }
@@ -604,22 +724,54 @@ impl Ppu {
         return self.registers.is_rendering_enabled();
     }
 
-    fn render_pattern_subpixel(&self, tile_index: u8, palette_type: PaletteType, palette: u8, xsub: u8, ysub: u8) -> Option<SystemColor> {
-        let color = self.lookup_pattern_color(palette_type, tile_index, xsub, ysub);
-        if color == COLOR_TRANSPARENT { return None; }
-        let system_color = self.lookup_palette(palette, color);
-        return Some(system_color);
+    fn evaluate_sprites(&mut self) {
+        let height = ternary(self.sprite_size, 16, 8);
+
+        let mut count = 0;
+        for i in 0..64 {
+            let sprite = self.lookup_sprite(i);
+            let pattern = self.fetch_sprite_pattern(&sprite, self.scanline);
+            match pattern {
+                None => continue,
+                Some(pattern) => {
+                    if count < 8 {
+                        self.sprite_patterns[count] = pattern;
+                        self.sprite_xs[count] = sprite.x;
+                        self.sprite_priorities[count] = sprite.is_front;
+                        self.sprite_indices[count] = i as u8;
+                        self.sprite_palettes[count] = sprite.palette;
+                    }
+                    count += 1;
+                }
+            };
+        }
+
+        if count > 8 {
+            count = 8;
+            self.sprite_overflow = true;
+        }
+        self.sprite_count = count as u8;
     }
 
-    fn lookup_palette(&self, palette: u8, color: u8) -> SystemColor {
-        // https://wiki.nesdev.com/w/index.php/PPU_palettes
-        let base_address = ADDRESS_BACKGROUND_PALETTE0;
-        let palette_size = 4;
-        let address:u16 = base_address + palette_size * (palette as u16) + (color as u16);
-        return self.peek(address) & 0x3f;
+    fn fetch_sprite_pattern(&self, sprite:&Sprite, row: u16) -> Option<u16> {
+        let is_size_16 = self.sprite_size;
+        let row = row as i16 - sprite.y as i16;
+        let height = ternary(is_size_16, 16, 8);
+        if row < 0 || row >= height {
+            return None;
+        }
+        let row = ternary(sprite.flip_vertical, height - 1 - row, row);
+        let tile = ternary(row >= 8, sprite.tile_index+1, sprite.tile_index);
+        let row = ternary(row >= 8, row-8, row);
+        let (tile_row0, tile_row1) = self.fetch_pattern_row(PaletteType::Sprite, tile, row as u8);
+        let (tile_row0, tile_row1) =
+            ternary(sprite.flip_horizontal,
+                    (reverse_bits(tile_row0), reverse_bits(tile_row1)),
+                    (tile_row0, tile_row1));
+        return Some(combine_bitplanes(tile_row1, tile_row0));
     }
 
-    fn lookup_pattern_color(&self, palette_type: PaletteType, tile_index: u8, xsub: u8, ysub: u8) -> PatternColor {
+    fn locate_pattern_row(&self, palette_type: PaletteType, tile_index: u8, ysub:u8) -> (u16, u16) {
         // https://wiki.nesdev.com/w/index.php/PPU_pattern_tables
         let ptr_pattern_table_base = 0x0000;
         let size_pattern_table = 0x1000;
@@ -634,12 +786,13 @@ impl Ppu {
             (size_tile * tile_index as u16);
         let ptr_tile_row0 = ptr_tile + (ysub as u16);
         let ptr_tile_row1 = ptr_tile_row0 + 8; // The bits of the color id are stored in separate bit planes.
+        (ptr_tile_row0, ptr_tile_row1)
+    }
+    fn fetch_pattern_row(&self, palette_type: PaletteType, tile_index:u8, ysub:u8) -> (u8, u8) {
+        let (ptr_tile_row0, ptr_tile_row1) = self.locate_pattern_row(palette_type, tile_index, ysub);
         let tile_row0 = self.peek(ptr_tile_row0);
         let tile_row1 = self.peek(ptr_tile_row1);
-        let color =
-            get_bit(tile_row0, 7 - xsub) << 0 |
-            get_bit(tile_row1, 7 - xsub) << 1;
-        return color;
+        return (tile_row0, tile_row1);
     }
 
     fn fetch_scanline_sprites(&mut self, y: u16) -> Vec<Sprite> {
@@ -669,7 +822,7 @@ impl Ppu {
     fn lookup_sprite(&self, i: usize) -> Sprite {
         let attribute = self.oam[i*4 + 2];
         return Sprite {
-            sprite_index: i as u8,
+            index: i as u8,
             y: self.oam[i*4 + 0],
             tile_index: self.oam[i*4 + 1],
             palette: (attribute & 3) + 4,
@@ -684,19 +837,7 @@ impl Ppu {
         return self.peek(ADDRESS_UNIVERSAL_BACKGROUND_COLOR);
     }
 
-    fn lookup_tile(&self) -> (PatternId, PaletteId) {
-        let tile_addr = self.registers.tile_address();
-        let tile = self.peek(tile_addr);
-        let palette = self.lookup_attribute_table();
-
-        return (tile, palette);
-    }
-
-    fn lookup_attribute_table(&self) -> PaletteId {
-        let ptr = self.registers.attribute_address();
-        let entry = self.peek(ptr);
-        let idx_x = self.registers.tile_x();
-        let idx_y = self.registers.tile_y();
+    fn split_attribute_entry(&self, entry: Attribute, idx_x: u8, idx_y: u8) -> PaletteId {
         let (left, top) = ((idx_x % 4) < 2, (idx_y % 4) < 2);
         let palette_id = match (left, top) {
             (true,  true)  => (entry >> 0) & 0x3,
@@ -735,7 +876,7 @@ impl Ppu {
             (self.open_bus & 0b00011111) |
             ((self.sprite_overflow as u8) << 5) |
             ((self.sprite0_hit as u8) << 6) |
-            ((self.vblank as u8) << 7)
+            ((self.nmi_occurred as u8) << 7)
             ;
         self.set_vblank(false);
         self.registers.read_status();
@@ -795,11 +936,12 @@ impl Ppu {
         self.display[i3] = b;
     }
     fn set_vblank(&mut self, new_vblank: bool) {
-        let vblank = self.vblank;
+        let vblank = self.nmi_occurred;
         if vblank != new_vblank {
             eprintln!("DEBUG - VBLANK CHANGED FROM {:?} TO {:?}", vblank, new_vblank);
         }
-        self.vblank = new_vblank;
+        self.nmi_occurred = new_vblank;
+        self.clocks_until_nmi = 15;
     }
 }
 
@@ -878,3 +1020,21 @@ pub const SYSTEM_PALETTE:SystemPalette =
         (0,   0,   0),   // xE
         (0,   0,   0),   // xF
     ];
+
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_combine_bitplanes() {
+        let a = 0b10011110;
+        let b = 0b01101100;
+        let o = 0b1001011011111000;
+        assert_eq!(combine_bitplanes(a,b), o);
+    }
+    #[test]
+    fn test_reverse_bits() {
+        let a = 0b10011110;
+        let o = 0b01111001;
+        assert_eq!(reverse_bits(a), o);
+    }
+}
