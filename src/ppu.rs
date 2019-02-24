@@ -486,10 +486,10 @@ impl Ppu {
             self.clocks_to_pause = ternary(self.frame_parity, 341, 340)-1;
             self.sprite0_hit = false;
             self.shift_new_tile();
-            self.shift_new_tile();
-            //self.registers.y_increment(); // x=256 action
-            //self.registers.reset_horizontal_position(); // x=257 action
 
+            self.shift_new_tile();
+            // self.registers.y_increment(); // x=256 action
+            self.registers.reset_horizontal_position(); // x=257 action
         } else {
             self.clocks_to_pause = 341;
         }
@@ -537,34 +537,39 @@ impl Ppu {
         let y = self.scanline as u16;
         // Each PPU clock cycle produces one pixel. The HBlank period is used to perform memory accesses.
         let sprites = self.fetch_scanline_sprites(y);
-        for x in 0u16..=263 {
+        for x in 0u16..=255 {
             self.registers.handle_scanline_x(x);
-            if (x % 8) == 0 {
+
+            let (background_tile, background_palette, tile_xsub, tile_ysub) = self.fetch_tile_from_shift(x, y);
+            if (x % 8) == 7 {
                 self.shift_new_tile();
             }
 
-            let (background_tile, background_palette, tile_xsub, tile_ysub) = self.fetch_tile_from_shift(x, y);
             let background_color = self.render_pattern_subpixel(background_tile, PaletteType::Background, background_palette, tile_xsub, tile_ysub);
-            let (is_sprite_front, sprite_color) =
-                match self.find_matching_sprite(x, &sprites) {
-                    None => (false, None),
-                    Some(sprite) => {
-                        let xsub = (x.wrapping_sub(sprite.x as u16)) % 8;
-                        let xsub = ternary(sprite.flip_horizontal, 7 - xsub, xsub);
-                        // TODO: In 8x16 mode, use the next tile if ysub belongs in the lower half of the sprite.
-                        let ysub = (y.wrapping_sub(sprite.y as u16)) % 8;
-                        let ysub = ternary(sprite.flip_vertical, 7 - ysub, ysub);
-                        let sprite_color = self.render_pattern_subpixel(sprite.tile_index, PaletteType::Sprite, sprite.palette, xsub as u8, ysub as u8);
-                        // Sprite 0 test
-                        if sprite.sprite_index == 0 &&
-                            sprite_color.is_some() &&
-                            background_color.is_some() {
-                                self.sprite0_hit = true;
-                            }
+            let mut is_sprite_front = false;
+            let mut sprite_color = None;
+            for sprite in &sprites {
+                if x >= (sprite.x as u16) && x < (sprite.x as u16 + SPRITE_WIDTH as u16) {
+                    let xsub = (x.wrapping_sub(sprite.x as u16)) % 8;
+                    let xsub = ternary(sprite.flip_horizontal, 7 - xsub, xsub);
+                    // TODO: In 8x16 mode, use the next tile if ysub belongs in the lower half of the sprite.
+                    let ysub = (y.wrapping_sub(sprite.y as u16)) % 8;
+                    let ysub = ternary(sprite.flip_vertical, 7 - ysub, ysub);
+                    let this_sprite_color = self.render_pattern_subpixel(sprite.tile_index, PaletteType::Sprite, sprite.palette, xsub as u8, ysub as u8);
+                    // Sprite 0 test
+                    if sprite.sprite_index == 0 &&
+                        this_sprite_color.is_some() &&
+                        background_color.is_some() {
+                            self.sprite0_hit = true;
+                        }
+                    if this_sprite_color.is_none() {
+                        continue;
+                    }
 
-                        (sprite.is_front, sprite_color)
-                    },
-                };
+                    is_sprite_front = sprite.is_front;
+                    sprite_color = this_sprite_color;
+                }
+            }
 
         //let y = (y.wrapping_sub(self.registers.fine_y() as u16));
             if is_sprite_front && sprite_color.is_some() {
@@ -580,8 +585,8 @@ impl Ppu {
                 self.write_system_pixel(x, y, global_background_color);
             }
         }
-        //self.registers.handle_scanline_x(256);
-        //self.registers.handle_scanline_x(257);
+        self.registers.handle_scanline_x(256);
+        self.registers.handle_scanline_x(257);
         self.shift_new_tile();
         self.shift_new_tile();
         // self.registers.handle_scanline_x(328);
