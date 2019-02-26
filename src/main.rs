@@ -99,15 +99,26 @@ fn main() {
         }
         // The rest of the game loop goes here...
         //audio_device.pause();
+        let now = Instant::now();
         nes.run_frame();
+
         // eprintln!("DEBUG - NUM SAMPLES {} {}", nes.apu.samples.len(), audio_device.size());
         present_frame(&mut canvas, &mut texture, &nes.ppu.display);
         //audio_device.resume();
         //eprintln!("DEBUG - SAMPLE SIZE - {}", nes.apu.samples.len());
         enqueue_frame_audio(&audio_device, &mut nes.apu.samples);
+        let after = Instant::now();
+        let target_millis = Duration::from_millis(1000 / 60);
+        let sleep_millis = target_millis.checked_sub(after - now);
 
+        match sleep_millis {
+            None => {}, // Took too long last frame
+            Some(sleep_millis) => {
+                eprintln!("DEBUG - SLEEP - {:?}", sleep_millis);
+                ::std::thread::sleep(sleep_millis);
+            }
+        }
         canvas.present();
-        ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
     }
 }
 
@@ -217,6 +228,7 @@ fn present_frame(canvas: &mut Canvas<Window>, texture: &mut Texture, ppu_pixels:
     texture.update(None, ppu_pixels, RENDER_WIDTH*3).unwrap();
     canvas.clear();
     canvas.copy(&texture, None, None).unwrap();
+    canvas.present();
 }
 
 fn enqueue_frame_audio(audio:&AudioQueue<f32>, samples:&mut Vec<f32>) {
