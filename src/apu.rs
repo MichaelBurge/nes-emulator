@@ -19,9 +19,9 @@ pub enum ApuPort {
 use ApuPort::*;
 
 const ENABLE_PULSE1:bool = true;
-const ENABLE_PULSE2:bool = false;
-const ENABLE_TRIANGLE:bool = false;
-const ENABLE_NOISE:bool = false;
+const ENABLE_PULSE2:bool = true;
+const ENABLE_TRIANGLE:bool = true;
+const ENABLE_NOISE:bool = true;
 const ENABLE_DMC:bool = false;
 
 pub fn map_apu_port(ptr: u16) -> Option<ApuPort> {

@@ -31,6 +31,7 @@ use crate::apu::Apu;
 const CLOCKS_PER_FRAME:u32 = 29780;
 const APU_FREQUENCY:i32 = 240;
 const AUDIO_FREQUENCY:usize = 44100;
+const SAMPLES_PER_FRAME:usize = 2032;
 const SCALE:usize = 4;
 
 fn main() {
@@ -57,23 +58,23 @@ fn main() {
     let mut nes = create_nes(Box::new(joystick1), Box::new(joystick2));
 
     let desired_spec = AudioSpecDesired {
-        freq: Some(44100),
+        freq: Some(AUDIO_FREQUENCY as i32),
         channels: Some(1),
         //samples: Some(8820),
-        samples: Some(14160),
+        samples: Some(SAMPLES_PER_FRAME as u16),
     };
 
-    //let audio_device = audio_subsystem.open_queue(None, &desired_spec).unwrap();
-    let audio_device = audio_subsystem.open_playback(None, &desired_spec, |spec| {
-        ApuSampler {
-            apu: NonNull::from(&mut nes.apu),
-            volume: 1.0,
-            resample_step:0,
-            sample: 0.0,
-            last_sample: 0.0,
-            last_time: Instant::now(),
-        }
-    }).unwrap();
+    let audio_device = audio_subsystem.open_queue(None, &desired_spec).unwrap();
+    // let audio_device = audio_subsystem.open_playback(None, &desired_spec, |spec| {
+    //     ApuSampler {
+    //         apu: NonNull::from(&mut nes.apu),
+    //         volume: 1.0,
+    //         resample_step:0,
+    //         sample: 0.0,
+    //         last_sample: 0.0,
+    //         last_time: Instant::now(),
+    //     }
+    // }).unwrap();
     canvas.set_draw_color(Color::RGB(0, 255, 255));
     canvas.clear();
     canvas.present();
@@ -99,10 +100,11 @@ fn main() {
         // The rest of the game loop goes here...
         //audio_device.pause();
         nes.run_frame();
+        // eprintln!("DEBUG - NUM SAMPLES {} {}", nes.apu.samples.len(), audio_device.size());
         present_frame(&mut canvas, &mut texture, &nes.ppu.display);
-        //eprintln!("DEBUG - SAMPLE SIZE - {}", nes.apu.samples.len());
-        //enqueue_frame_audio(&audio_device, &mut nes.apu.samples);
         //audio_device.resume();
+        //eprintln!("DEBUG - SAMPLE SIZE - {}", nes.apu.samples.len());
+        enqueue_frame_audio(&audio_device, &mut nes.apu.samples);
 
         canvas.present();
         ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
@@ -128,25 +130,49 @@ impl ApuSampler {
     fn resample(last_sample:&mut f32, samples: &[f32], resamples:&mut [f32]) {
         let num_samples = samples.len();
         let num_resamples = resamples.len();
-        eprintln!("DEBUG - SAMPLES - {} {}", num_samples, num_resamples);
+        let new_time = Instant::now();
+
         let ratio = num_samples as f32 / num_resamples as f32;
-        let mut count = 0.0f32;
+        let mut t = 0.0f32;
         let mut sample_idx = 0;
+        let mut num_skip = 0;
         for i in resamples.iter_mut() {
-            if num_samples == 0 {
-                *i = *last_sample;
-            } else {
-                let sample = samples[sample_idx];
-                *last_sample = sample;
-                *i = sample;
-                if count >= 1.0 {
-                    sample_idx += count as usize;
-                    count %= 1.0;
+            *i = match samples.get(sample_idx) {
+                None => *last_sample,
+                Some(sample) => {
+                    *last_sample = *sample;
+                    t * *sample + (1.0 - t) * *last_sample
                 }
-                count += ratio;
+            };
+            if t >= 1.0 {
+                sample_idx += t as usize;
+                t %= 1.0;
             }
+            t += ratio;
         }
     }
+    // fn resample(last_sample:&mut f32, samples: &[f32], resamples:&mut [f32]) {
+    //     let num_samples = samples.len();
+    //     let num_resamples = resamples.len();
+    //     eprintln!("DEBUG - SAMPLES - {} {}", num_samples, num_resamples);
+    //     let ratio = num_samples as f32 / num_resamples as f32;
+    //     let mut count = 0.0f32;
+    //     let mut sample_idx = 0;
+    //     for i in resamples.iter_mut() {
+    //         if num_samples == 0 {
+    //             *i = *last_sample;
+    //         } else {
+    //             let sample = samples[sample_idx];
+    //             *last_sample = sample;
+    //             *i = sample;
+    //             if count >= 1.0 {
+    //                 sample_idx += count as usize;
+    //                 count %= 1.0;
+    //             }
+    //             count += ratio;
+    //         }
+    //     }
+    // }
 }
 
 impl AudioCallback for ApuSampler {
@@ -157,6 +183,7 @@ impl AudioCallback for ApuSampler {
         let new_time = Instant::now();
         // eprintln!("SAMPLES {} {} {:?}", out.len(), apu.samples.len(), (new_time - self.last_time));
         let samples_slice = apu.samples.as_slice();
+        // eprintln!("DEBUG - SAMPLES - {} {} {:?}", samples_slice.len(), out.len(), new_time - self.last_time);
         ApuSampler::resample(&mut self.last_sample, samples_slice, out);
         apu.samples.clear();
         // if apu.samples.len() > 1000000 {
@@ -193,12 +220,10 @@ fn present_frame(canvas: &mut Canvas<Window>, texture: &mut Texture, ppu_pixels:
 }
 
 fn enqueue_frame_audio(audio:&AudioQueue<f32>, samples:&mut Vec<f32>) {
-    let xs = samples.as_slice();
-    let mut output:[f32;AUDIO_FREQUENCY] = [0.0;AUDIO_FREQUENCY];
-    // for i in 0..AUDIO_FREQUENCY {
-    //     output[i] = samples[(i as f32 / AUDIO_FREQUENCY as f32 * samples.len() as f32) as usize];
-    // }
-    audio.queue(&xs);
+    let mut xs = samples.as_slice();
+    if audio.size() as usize <= 4*SAMPLES_PER_FRAME {
+        audio.queue(&xs);
+    }
     samples.clear();
 }
 
