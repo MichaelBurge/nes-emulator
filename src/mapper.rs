@@ -2,8 +2,11 @@
 
 use std::cell::UnsafeCell;
 use std::borrow::BorrowMut;
+use std::fs::File;
 
-pub trait AddressSpace {
+use crate::serialization::Savable;
+
+pub trait AddressSpace : Savable {
     // Minimal definition
     fn peek(&self, ptr: u16) -> u8;
     fn poke(&mut self, ptr: u16, v: u8);
@@ -38,6 +41,15 @@ impl Ram {
     }
 }
 
+impl Savable for Ram {
+    fn save(&self, fh: &mut File) {
+        self.bs.save(fh);
+    }
+    fn load(&mut self, fh: &mut File) {
+        self.bs.load(fh);
+    }
+}
+
 impl AddressSpace for Ram {
     fn peek(&self, ptr:u16) -> u8 {
         return self.bs[ptr as usize];
@@ -58,6 +70,12 @@ impl<T:AddressSpace> AddressSpace for *mut T {
     }
 }
 
+impl<T:AddressSpace> Savable for *mut T {
+    // The pointer should still be valid, since this Trait updates objects in-place.
+    fn save(&self, _:&mut File) { }
+    fn load(&mut self, _:&mut File) { }
+}
+
 pub struct Rom {
     bs: Vec<u8>,
 }
@@ -65,6 +83,15 @@ pub struct Rom {
 impl Rom {
     pub fn new(bs: Vec<u8>) -> Rom {
         Rom { bs: bs }
+    }
+}
+
+impl Savable for Rom {
+    fn save(&self, fh: &mut File) {
+        self.bs.save(fh);
+    }
+    fn load(&mut self, fh: &mut File) {
+        self.bs.load(fh);
     }
 }
 
@@ -98,6 +125,23 @@ impl MirroredAddressSpace {
     }
 }
 
+impl Savable for MirroredAddressSpace {
+    fn save(&self, fh: &mut File) {
+        self.base.save(fh);
+        self.base_begin.save(fh);
+        self.base_end.save(fh);
+        self.extended_begin.save(fh);
+        self.extended_end.save(fh);
+    }
+    fn load(&mut self, fh: &mut File) {
+        self.base.load(fh);
+        self.base_begin.load(fh);
+        self.base_end.load(fh);
+        self.extended_begin.load(fh);
+        self.extended_end.load(fh);
+    }
+}
+
 impl AddressSpace for MirroredAddressSpace {
     fn peek(&self, ptr:u16) -> u8 {
         return self.base.peek(self.map_address(ptr));
@@ -114,6 +158,12 @@ impl NullAddressSpace {
         NullAddressSpace { }
     }
 }
+
+impl Savable for NullAddressSpace {
+    fn save(&self, fh: &mut File) { }
+    fn load(&mut self, fh: &mut File) { }
+}
+
 impl AddressSpace for NullAddressSpace {
     fn peek(&self, ptr:u16) -> u8{
         eprintln!("DEBUG - READ FROM NULL MAP {:x}", ptr);
@@ -125,9 +175,34 @@ impl AddressSpace for NullAddressSpace {
 }
 
 type UsesOriginalAddress = bool;
-type Mapping = (u16, u16, Box<dyn AddressSpace>, UsesOriginalAddress);
+struct Mapping(u16, u16, Box<dyn AddressSpace>, UsesOriginalAddress);
+
+impl Savable for Mapping {
+    fn save(&self, fh: &mut File) {
+        self.0.save(fh);
+        self.1.save(fh);
+        self.2.save(fh);
+        self.3.save(fh);
+    }
+    fn load(&mut self, fh: &mut File) {
+        self.0.load(fh);
+        self.1.load(fh);
+        self.2.load(fh);
+        self.3.load(fh);
+    }
+}
+
 pub struct Mapper {
     mappings: Vec<Mapping>,
+}
+
+impl Savable for Mapper {
+    fn save(&self, fh: &mut File) {
+        self.mappings.as_slice().save(fh);
+    }
+    fn load(&mut self, fh: &mut File) {
+        self.mappings.as_mut_slice().load(fh);
+    }
 }
 
 impl Mapper {
@@ -138,13 +213,13 @@ impl Mapper {
     }
     fn print_mappings(&self) {
 
-        for (range_begin, range_end, _, use_original_address) in self.mappings.iter() {
+        for Mapping(range_begin, range_end, _, use_original_address) in self.mappings.iter() {
             eprintln!("[{:x}, {:x}] - {:?}", range_begin, range_end, use_original_address);
         }
     }
     fn lookup_address_space(&self, ptr: u16) -> (usize, u16) {
         let mut last_range_end = 0;
-        for ((range_begin, range_end, _, use_original_address),
+        for (Mapping(range_begin, range_end, _, use_original_address),
              space_idx) in
             self.mappings.iter()
             .zip(0..self.mappings.len()) {
@@ -162,7 +237,7 @@ impl Mapper {
         panic!();
     }
     pub fn map_address_space(&mut self, begin: u16, end: u16, space: Box<dyn AddressSpace>, use_original: bool) {
-        self.mappings.push((begin, end, space, use_original));
+        self.mappings.push(Mapping(begin, end, space, use_original));
     }
 
     pub fn map_ram(&mut self, begin: u16, end: u16) {
@@ -185,7 +260,7 @@ impl Mapper {
             let space:MirroredAddressSpace = MirroredAddressSpace {
                 base: space,
                 base_begin: base_begin, base_end,
-            extended_begin, extended_end,
+                extended_begin, extended_end,
         };
         self.map_address_space(extended_begin, extended_end, Box::new(space), true);
     }
@@ -194,7 +269,7 @@ impl Mapper {
 impl AddressSpace for Mapper {
     fn peek(&self, ptr:u16) -> u8{
         let (space_idx, space_ptr) = self.lookup_address_space(ptr);
-        let (_, _, space, _) = &self.mappings[space_idx];
+        let Mapping(_, _, space, _) = &self.mappings[space_idx];
         //eprintln!("DEBUG - MEMORY-ACCESS - ({:?}, {:?})", space_idx, space_ptr);
         let value = space.peek(space_ptr);
         //eprintln!("DEBUG - MEMORY-ACCESS-RESULT - ({:x})", value);
@@ -202,7 +277,7 @@ impl AddressSpace for Mapper {
     }
     fn poke(&mut self, ptr:u16, value:u8) {
         let (space_idx, space_ptr) = self.lookup_address_space(ptr);
-        let &mut (_,_, ref mut space,_) = self.mappings.get_mut(space_idx).unwrap();
+        let &mut Mapping(_,_, ref mut space,_) = self.mappings.get_mut(space_idx).unwrap();
         space.poke(space_ptr, value);
     }
 }
@@ -215,6 +290,11 @@ pub type LoggedAddressSpaceRecord = (usize, AccessType, u16, u8);
 pub struct LoggedAddressSpace {
     pub space: Box<AddressSpace>,
     pub log: UnsafeCell<Vec<LoggedAddressSpaceRecord>>,
+}
+
+impl Savable for LoggedAddressSpace {
+    fn save(&self, fh: &mut File) { panic!("save() unimplemented"); }
+    fn load(&mut self, fh: &mut File) { panic!("load() unimplemented"); }
 }
 
 impl LoggedAddressSpace {

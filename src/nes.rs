@@ -13,6 +13,7 @@ use crate::ppu::PaletteControl;
 use crate::apu::ApuPort::*;
 use crate::mapper::{Mapper, Ram};
 use crate::joystick::Joystick;
+use crate::serialization::Savable;
 
 use std::fs::File;
 use std::io::Read;
@@ -183,4 +184,21 @@ impl Clocked for Nes {
     }
 }
 
-// https://wiki.nesdev.com/w/index.php/2A03
+use crate::serialization::file_position;
+
+impl Savable for Nes {
+    fn save(&self, fh: &mut File) {
+        self.cpu.save(fh);
+        self.apu.save(fh);
+        self.ppu.save(fh);
+        0xF00Fu32.save(fh);
+    }
+    fn load(&mut self, fh: &mut File) {
+        self.cpu.load(fh);
+        self.apu.load(fh);
+        self.ppu.load(fh);
+        let mut check = 0u32;
+        check.load(fh);
+        assert_eq!(check, 0xf00f);
+    }
+}

@@ -5,10 +5,13 @@ use crate::common::{run_clocks, Clocked, get_bit};
 use crate::mapper::AddressSpace;
 use crate::mapper::NullAddressSpace;
 use crate::mapper::LoggedAddressSpace;
+use crate::serialization::Savable;
+use crate::serialization::file_position;
 
 use std::io;
 use std::mem::transmute;
 use std::mem::transmute_copy;
+use std::fs::File;
 
 const ADDRESS_NMI:u16 = 0xFFFA;
 const ADDRESS_RESET:u16 = 0xFFFC;
@@ -36,6 +39,45 @@ pub struct C6502 {
     debugger: C6502Debugger,
     pub is_tracing: bool,
     clocks_to_pause: u16,
+}
+
+impl Savable for C6502 {
+    fn save(&self, fh: &mut File) {
+        self.acc.save(fh);
+        self.x.save(fh);
+        self.y.save(fh);
+        self.pc.save(fh);
+        self.sp.save(fh);
+        self.carry.save(fh);
+        self.zero.save(fh);
+        self.interruptd.save(fh);
+        self.decimal.save(fh);
+        self.overflow.save(fh);
+        self.negative.save(fh);
+        self.mapper.save(fh);
+        self.counter.save(fh);
+        self.clocks.save(fh);
+        self.is_tracing.save(fh);
+        self.clocks_to_pause.save(fh);
+    }
+    fn load(&mut self, fh: &mut File) {
+        self.acc.load(fh);
+        self.x.load(fh);
+        self.y.load(fh);
+        self.pc.load(fh);
+        self.sp.load(fh);
+        self.carry.load(fh);
+        self.zero.load(fh);
+        self.interruptd.load(fh);
+        self.decimal.load(fh);
+        self.overflow.load(fh);
+        self.negative.load(fh);
+        self.mapper.load(fh);
+        self.counter.load(fh);
+        self.clocks.load(fh);
+        self.is_tracing.load(fh);
+        self.clocks_to_pause.load(fh);
+    }
 }
 
 impl C6502 {

@@ -3,8 +3,10 @@
 
 use crate::common::{Clocked, ternary, get_bit};
 use crate::mapper::AddressSpace;
+use crate::serialization::Savable;
 
 use std::collections::VecDeque;
+use std::fs::File;
 
 // https://wiki.nesdev.com/w/index.php/2A03
 pub enum ApuPort {
@@ -115,6 +117,15 @@ pub struct Apu {
     triangle:Triangle,
     noise:Noise,
     dmc:Dmc,
+}
+
+impl Savable for Apu {
+    fn save(&self, fh: &mut File) {
+        // TODO
+    }
+    fn load(&mut self, fh: &mut File) {
+        // TODO
+    }
 }
 
 impl Clocked for Apu {

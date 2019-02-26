@@ -5,6 +5,7 @@ mod apu;
 mod mapper;
 mod nes;
 mod joystick;
+mod serialization;
 
 extern crate sdl2;
 
@@ -19,6 +20,7 @@ use sdl2::render::TextureAccess;
 use sdl2::video::Window;
 use std::ptr::NonNull;
 use std::time::{Duration,Instant};
+use std::fs::File;
 
 use crate::joystick::Joystick;
 use crate::mapper::AddressSpace;
@@ -26,6 +28,7 @@ use crate::nes::Nes;
 use crate::nes::{load_ines, read_ines};
 use crate::ppu::*;
 use crate::apu::Apu;
+use crate::serialization::{Savable};
 
 // https://wiki.nesdev.com/w/index.php/Cycle_reference_chart
 const CLOCKS_PER_FRAME:u32 = 29780;
@@ -94,6 +97,14 @@ fn main() {
                 Event::KeyDown { keycode: Some(Keycode::Pause), .. } => {
                     nes.break_debugger();
                 },
+                Event::KeyDown { keycode: Some(Keycode::F5), .. } => {
+                    let mut file = File::create("save.state").unwrap();
+                    nes.save(&mut file);
+                },
+                Event::KeyDown { keycode: Some(Keycode::F6), .. } => {
+                    let mut file = File::open("save.state").unwrap();
+                    nes.load(&mut file);
+                },
                 _ => {}
             }
         }
@@ -114,7 +125,7 @@ fn main() {
         match sleep_millis {
             None => {}, // Took too long last frame
             Some(sleep_millis) => {
-                eprintln!("DEBUG - SLEEP - {:?}", sleep_millis);
+                //eprintln!("DEBUG - SLEEP - {:?}", sleep_millis);
                 ::std::thread::sleep(sleep_millis);
             }
         }

@@ -2,14 +2,27 @@
 
 use std::mem::transmute;
 use sdl2::GameControllerSubsystem;
+use std::fs::File;
 
 use crate::common::get_bit;
 use crate::mapper::AddressSpace;
+use crate::serialization::Savable;
 
 pub struct Joystick {
     sdl_controller: sdl2::controller::GameController,
     button_mask: u8,
     strobe_active: bool,
+}
+
+impl Savable for Joystick {
+    fn save(&self, fh: &mut File) {
+        self.button_mask.save(fh);
+        self.strobe_active.save(fh);
+    }
+    fn load(&mut self, fh: &mut File) {
+        self.button_mask.load(fh);
+        self.strobe_active.load(fh);
+    }
 }
 
 impl Joystick {

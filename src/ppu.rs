@@ -3,8 +3,10 @@
 use crate::common::*;
 use crate::mapper::{AddressSpace, Mapper};
 use crate::c6502::C6502;
+use crate::serialization::Savable;
 
 use std::mem::transmute;
+use std::fs::File;
 
 //use std::vec;
 
@@ -77,6 +79,79 @@ pub struct Ppu {
     sprite_indices: [u8;8],
 }
 
+impl Savable for Ppu {
+    fn save(&self, fh: &mut File) {
+        self.oam.save(fh);
+        self.is_vblank_nmi.save(fh);
+        self.is_scanline_irq.save(fh);
+        self.registers.save(fh);
+        self.sprite_pattern_table.save(fh);
+        self.background_pattern_table.save(fh);
+        self.sprite_overflow.save(fh);
+        self.sprite0_hit.save(fh);
+        self.sprite_size.save(fh);
+        self.frame_parity.save(fh);
+        self.open_bus.save(fh);
+        self.ppu_master_select.save(fh);
+        self.generate_vblank_nmi.save(fh);
+        self.ppudata_buffer.save(fh);
+        self.oam_ptr.save(fh);
+        self.clocks_until_nmi.save(fh);
+        self.nmi_occurred.save(fh);
+        self.frame.save(fh);
+        self.scanline.save(fh);
+        self.cycle.save(fh);
+        self.sprite_count.save(fh);
+        self.tile_pattern_low_shift.save(fh);
+        self.tile_pattern_high_shift.save(fh);
+        self.tile_palette_shift.save(fh);
+        self.tile_nametable.save(fh);
+        self.tile_attribute.save(fh);
+        self.tile_pattern_low.save(fh);
+        self.tile_pattern_high.save(fh);
+        self.sprite_patterns.save(fh);
+        self.sprite_palettes.save(fh);
+        self.sprite_xs.save(fh);
+        self.sprite_priorities.save(fh);
+        self.sprite_indices.save(fh);
+    }
+    fn load(&mut self, fh: &mut File) {
+        self.oam.load(fh);
+        self.is_vblank_nmi.load(fh);
+        self.is_scanline_irq.load(fh);
+        self.registers.load(fh);
+        self.sprite_pattern_table.load(fh);
+        self.background_pattern_table.load(fh);
+        self.sprite_overflow.load(fh);
+        self.sprite0_hit.load(fh);
+        self.sprite_size.load(fh);
+        self.frame_parity.load(fh);
+        self.open_bus.load(fh);
+        self.ppu_master_select.load(fh);
+        self.generate_vblank_nmi.load(fh);
+        self.ppudata_buffer.load(fh);
+        self.oam_ptr.load(fh);
+        self.clocks_until_nmi.load(fh);
+        self.nmi_occurred.load(fh);
+        self.frame.load(fh);
+        self.scanline.load(fh);
+        self.cycle.load(fh);
+        self.sprite_count.load(fh);
+        self.tile_pattern_low_shift.load(fh);
+        self.tile_pattern_high_shift.load(fh);
+        self.tile_palette_shift.load(fh);
+        self.tile_nametable.load(fh);
+        self.tile_attribute.load(fh);
+        self.tile_pattern_low.load(fh);
+        self.tile_pattern_high.load(fh);
+        self.sprite_patterns.load(fh);
+        self.sprite_palettes.load(fh);
+        self.sprite_xs.load(fh);
+        self.sprite_priorities.load(fh);
+        self.sprite_indices.load(fh);
+    }
+}
+
 struct PpuRegisters {
     // Register is only 15 bits in hardware.
     /*
@@ -100,6 +175,41 @@ struct PpuRegisters {
     emphasize_blue: bool,
     show_leftmost_background: bool,
     show_leftmost_sprite: bool,
+}
+
+impl Savable for PpuRegisters {
+    fn save(&self, fh: &mut File) {
+        self.v.save(fh);
+        self.t.save(fh);
+        self.x.save(fh);
+        self.w.save(fh);
+
+        self.vram_increment.save(fh);
+        self.is_greyscale.save(fh);
+        self.background_enabled.save(fh);
+        self.sprites_enabled.save(fh);
+        self.emphasize_red.save(fh);
+        self.emphasize_green.save(fh);
+        self.emphasize_blue.save(fh);
+        self.show_leftmost_background.save(fh);
+        self.show_leftmost_sprite.save(fh);
+    }
+    fn load(&mut self, fh: &mut File) {
+        self.v.load(fh);
+        self.t.load(fh);
+        self.x.load(fh);
+        self.w.load(fh);
+
+        self.vram_increment.load(fh);
+        self.is_greyscale.load(fh);
+        self.background_enabled.load(fh);
+        self.sprites_enabled.load(fh);
+        self.emphasize_red.load(fh);
+        self.emphasize_green.load(fh);
+        self.emphasize_blue.load(fh);
+        self.show_leftmost_background.load(fh);
+        self.show_leftmost_sprite.load(fh);
+    }
 }
 
 impl PpuRegisters {
@@ -336,6 +446,17 @@ pub struct CpuPpuInterconnect {
     cpu: *mut C6502,
 }
 
+impl Savable for CpuPpuInterconnect {
+    fn save(&self, fh: &mut File) {
+        self.ppu.save(fh);
+        self.cpu.save(fh);
+    }
+    fn load(&mut self, fh: &mut File) {
+        self.ppu.load(fh);
+        self.cpu.load(fh);
+    }
+}
+
 impl CpuPpuInterconnect {
     pub fn new(ppu: &mut Ppu, cpu: &mut C6502) -> CpuPpuInterconnect {
         CpuPpuInterconnect { ppu: ppu, cpu: cpu }
@@ -419,6 +540,15 @@ impl PaletteControl {
             _ => ptr,
         };
         return (remapped - 0x3f00) as usize;
+    }
+}
+
+impl Savable for PaletteControl {
+    fn save(&self, fh:&mut File) {
+        self.memory.save(fh);
+    }
+    fn load(&mut self, fh:&mut File) {
+        self.memory.load(fh);
     }
 }
 
