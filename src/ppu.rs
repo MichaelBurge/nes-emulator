@@ -179,11 +179,11 @@ impl PpuRegisters {
         self.t &= !mask;
         self.t |= (x & 0x3) << 10;
         self.vram_increment = get_bit(px, 2) > 0;
-        eprintln!("DEBUG - PPU CONTROL WRITE {:x} {}", px, self.vram_increment);
+        // eprintln!("DEBUG - PPU CONTROL WRITE {:x} {}", px, self.vram_increment);
     }
 
     pub fn write_mask(&mut self, v:u8) {
-        eprintln!("DEBUG - PPU MASK WRITE {:x}", v);
+        // eprintln!("DEBUG - PPU MASK WRITE {:x}", v);
         self.is_greyscale = get_bit(v,0)>0;
         self.show_leftmost_background = get_bit(v,1)>0;
         self.show_leftmost_sprite = get_bit(v,2)>0;
@@ -222,7 +222,7 @@ impl PpuRegisters {
             self.v = self.t;
         }
         self.w = !self.w;
-        eprintln!("DEBUG - PPU WRITE ADDRESS - {:x} {}", self.v, self.w);
+        // eprintln!("DEBUG - PPU WRITE ADDRESS - {:x} {}", self.v, self.w);
     }
     fn is_rendering(&self) -> bool {
         let scanline = self.scanline();
@@ -251,7 +251,7 @@ impl PpuRegisters {
             self.increment_y();
         } else {
             let increment = ternary(self.vram_increment, 32, 1);
-            eprintln!("DEBUG - VRAM INCREMENT - {} {}", self.vram_increment, increment);
+            // eprintln!("DEBUG - VRAM INCREMENT - {} {}", self.vram_increment, increment);
             self.v = self.v.wrapping_add(increment) & 0x3FFF;
         }
     }
@@ -493,7 +493,7 @@ impl Clocked for Ppu {
         }
         // Vblank
         if self.scanline == 241 && self.cycle == 1 {
-            eprintln!("DEBUG - VBLANK HIT - {}", self.generate_vblank_nmi);
+            // eprintln!("DEBUG - VBLANK HIT - {}", self.generate_vblank_nmi);
             self.set_vblank(true);
         }
         if self.scanline == SCANLINE_PRERENDER && self.cycle == 1 {
@@ -595,8 +595,8 @@ impl Ppu {
         let palette = self.split_attribute_entry(attribute, idx_x, idx_y) as u16;
         let pattern_low = self.tile_pattern_low;
         let pattern_high = self.tile_pattern_high;
-        self.tile_pattern_low_shift |= (pattern_low as u16);
-        self.tile_pattern_high_shift |= (pattern_high as u16);
+        self.tile_pattern_low_shift |= pattern_low as u16;
+        self.tile_pattern_high_shift |= pattern_high as u16;
         self.tile_palette_shift <<= 2;
         self.tile_palette_shift |= palette;
     }
@@ -903,6 +903,7 @@ impl Ppu {
     }
     pub fn read_data(&mut self) -> u8 {
         let ptr = self.registers.vram_ptr();
+        self.registers.advance_vram_ptr();
         let val = self.peek(ptr);
         if ptr < 0x3f00 {
             let old_val = self.ppudata_buffer;
@@ -915,7 +916,7 @@ impl Ppu {
     pub fn write_data(&mut self, v:u8) {
         let ptr = self.registers.vram_ptr();
         self.registers.advance_vram_ptr();
-        eprintln!("DEBUG - PPU WRITE DATA - {:x} {:x} {:x}", ptr, v, self.registers.vram_ptr());
+        // eprintln!("DEBUG - PPU WRITE DATA - {:x} {:x} {:x}", ptr, v, self.registers.vram_ptr());
         self.poke(ptr, v);
     }
     fn lookup_system_pixel(&self, i: SystemColor) -> RgbColor {
@@ -939,7 +940,7 @@ impl Ppu {
     fn set_vblank(&mut self, new_vblank: bool) {
         let vblank = self.nmi_occurred;
         if vblank != new_vblank {
-            eprintln!("DEBUG - VBLANK CHANGED FROM {:?} TO {:?}", vblank, new_vblank);
+            //eprintln!("DEBUG - VBLANK CHANGED FROM {:?} TO {:?}", vblank, new_vblank);
         }
         self.nmi_occurred = new_vblank;
         self.clocks_until_nmi = 15;

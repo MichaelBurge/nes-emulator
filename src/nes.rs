@@ -22,7 +22,7 @@ use std::ops::DerefMut;
 
 pub struct Nes {
     cpu: Box<C6502>,
-    apu: Apu,
+    pub apu: Box<Apu>,
     pub ppu: Box<Ppu>,
 }
 
@@ -30,7 +30,7 @@ impl Nes {
     fn new(cpu_mapper: Box<AddressSpace>) -> Nes {
         return Nes {
             cpu: Box::new(C6502::new(cpu_mapper)),
-            apu: Apu::new(),
+            apu: Box::new(Apu::new()),
             ppu: Box::new(Ppu::new()),
         };
     }
@@ -137,14 +137,15 @@ impl Nes {
         let mut mapper:Mapper = Mapper::new();
         let cpu_ram:Ram = Ram::new(0x800);
         let cpu_ppu:CpuPpuInterconnect = CpuPpuInterconnect::new(self.ppu.deref_mut(), self.cpu.deref_mut());
+        let apu = self.apu.deref_mut() as *mut Apu;
         // https://wiki.nesdev.com/w/index.php/CPU_memory_map
         mapper.map_mirrored(0x0000, 0x07ff, 0x0000, 0x1fff, Box::new(cpu_ram), false);
         mapper.map_mirrored(0x2000, 0x2007, 0x2000, 0x3fff, Box::new(cpu_ppu), true);
-        mapper.map_null(0x4000, 0x4013); // APU/Joystick ports
+        mapper.map_address_space(0x4000, 0x4013, Box::new(apu), true);;
         mapper.map_address_space(0x4014, 0x4014, Box::new(cpu_ppu), true);
-        mapper.map_null(0x4015, 0x4015);
+        mapper.map_address_space(0x4015, 0x4015, Box::new(apu), true);
         mapper.map_address_space(0x4016, 0x4016, joystick1, false);
-        mapper.map_address_space(0x4017, 0x4017, joystick2, false);
+        mapper.map_address_space(0x4017, 0x4017, Box::new(apu), true); // TODO - 0x4017 is also mapped to joystick2
 
         mapper.map_null(0x4018, 0x401F); // APU test mode
         mapper.map_address_space(0x4020, 0xFFFF, cartridge, true);
@@ -171,13 +172,14 @@ impl Clocked for Nes {
         self.cpu.clock();
         for _i in 1..3 { self.ppu.clock(); }
         if self.ppu.is_vblank_nmi {
-            eprintln!("DEBUG - VBLANK-NMI DETECTED");
+            //eprintln!("DEBUG - VBLANK-NMI DETECTED");
             self.cpu.nmi();
             self.ppu.is_vblank_nmi = false;
         } else if self.ppu.is_scanline_irq {
             self.cpu.irq();
             self.ppu.is_scanline_irq = false;
         }
+        self.apu.clock(); // Clocked by SDL callback.
     }
 }
 

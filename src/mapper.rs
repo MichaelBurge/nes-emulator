@@ -47,6 +47,17 @@ impl AddressSpace for Ram {
     }
 }
 
+impl<T:AddressSpace> AddressSpace for *mut T {
+    fn peek(&self, ptr:u16) -> u8 {
+        let t:&T = unsafe { &**self as &T};
+        return t.peek(ptr);
+    }
+    fn poke(&mut self, ptr:u16, x:u8) {
+        let t:&mut T = unsafe { &mut **self as &mut T };
+        t.poke(ptr, x);
+    }
+}
+
 pub struct Rom {
     bs: Vec<u8>,
 }
