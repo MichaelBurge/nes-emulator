@@ -6,7 +6,8 @@ use crate::c6502::C6502;
 use crate::serialization::Savable;
 
 use std::mem::transmute;
-use std::fs::File;
+use std::io::Read;
+use std::io::Write;
 
 //use std::vec;
 
@@ -35,7 +36,8 @@ const GLOBAL_BACKGROUND_COLOR:PaletteColor = PaletteColor { color: 0 };
 
 pub const RENDER_WIDTH:usize = 256;
 pub const RENDER_HEIGHT:usize = 240;
-pub const RENDER_SIZE:usize = RENDER_WIDTH * RENDER_HEIGHT * 3;
+pub const UNRENDER_SIZE:usize = RENDER_WIDTH * RENDER_HEIGHT;
+pub const RENDER_SIZE:usize = UNRENDER_SIZE * 3;
 
 pub struct Ppu {
     pub display: [u8; RENDER_SIZE],
@@ -80,8 +82,9 @@ pub struct Ppu {
 }
 
 impl Savable for Ppu {
-    fn save(&self, fh: &mut File) {
+    fn save(&self, fh: &mut Write) {
         self.oam.save(fh);
+        self.mapper.save(fh);
         self.is_vblank_nmi.save(fh);
         self.is_scanline_irq.save(fh);
         self.registers.save(fh);
@@ -115,8 +118,9 @@ impl Savable for Ppu {
         self.sprite_priorities.save(fh);
         self.sprite_indices.save(fh);
     }
-    fn load(&mut self, fh: &mut File) {
+    fn load(&mut self, fh: &mut Read) {
         self.oam.load(fh);
+        self.mapper.load(fh);
         self.is_vblank_nmi.load(fh);
         self.is_scanline_irq.load(fh);
         self.registers.load(fh);
@@ -178,7 +182,7 @@ struct PpuRegisters {
 }
 
 impl Savable for PpuRegisters {
-    fn save(&self, fh: &mut File) {
+    fn save(&self, fh: &mut Write) {
         self.v.save(fh);
         self.t.save(fh);
         self.x.save(fh);
@@ -194,7 +198,7 @@ impl Savable for PpuRegisters {
         self.show_leftmost_background.save(fh);
         self.show_leftmost_sprite.save(fh);
     }
-    fn load(&mut self, fh: &mut File) {
+    fn load(&mut self, fh: &mut Read) {
         self.v.load(fh);
         self.t.load(fh);
         self.x.load(fh);
@@ -447,11 +451,11 @@ pub struct CpuPpuInterconnect {
 }
 
 impl Savable for CpuPpuInterconnect {
-    fn save(&self, fh: &mut File) {
+    fn save(&self, fh: &mut Write) {
         self.ppu.save(fh);
         self.cpu.save(fh);
     }
-    fn load(&mut self, fh: &mut File) {
+    fn load(&mut self, fh: &mut Read) {
         self.ppu.load(fh);
         self.cpu.load(fh);
     }
@@ -544,10 +548,10 @@ impl PaletteControl {
 }
 
 impl Savable for PaletteControl {
-    fn save(&self, fh:&mut File) {
+    fn save(&self, fh:&mut Write) {
         self.memory.save(fh);
     }
-    fn load(&mut self, fh:&mut File) {
+    fn load(&mut self, fh:&mut Read) {
         self.memory.load(fh);
     }
 }
@@ -713,9 +717,21 @@ impl Ppu {
         }
     }
 
-    pub fn render(&self, buf: &mut [u8]) {
-        buf.copy_from_slice(&self.display[0..RENDER_SIZE]);
+    pub fn render(&self) -> [u8; RENDER_SIZE] {
+        let mut ret = [0;RENDER_SIZE];
+        for i in 0..UNRENDER_SIZE {
+            let c = self.display[i];
+            let (r,g,b) = self.lookup_system_pixel(c);
+            ret[i*3+0] = r;
+            ret[i*3+1] = g;
+            ret[i*3+2] = b;
+        }
+        return ret;
     }
+
+    // pub fn render(&self, buf: &mut [u8]) {
+    //     buf.copy_from_slice(&self.display[0..RENDER_SIZE]);
+    // }
 
     fn shift_new_tile(&mut self) {
         let background_tile = self.tile_nametable;
@@ -892,7 +908,7 @@ impl Ppu {
             return None;
         }
         let row = ternary(sprite.flip_vertical, height - 1 - row, row);
-        let tile = ternary(row >= 8, sprite.tile_index+1, sprite.tile_index);
+        let tile = sprite.tile_index; //TODO -- ternary(row >= 8, sprite.tile_index+1, sprite.tile_index);
         let row = ternary(row >= 8, row-8, row);
         let (tile_row0, tile_row1) = self.fetch_pattern_row(PaletteType::Sprite, tile, row as u8);
         let (tile_row0, tile_row1) =
@@ -1056,16 +1072,8 @@ impl Ppu {
         if x >= 256 || y >= 240 {
             return;
         }
-        let (r,g,b) = self.lookup_system_pixel(c);
-        let xz = x as usize;
-        let yz = y as usize;
-        let i1 = 3*(xz+(256*yz))+0;
-        let i2 = 3*(xz+(256*yz))+1;
-        let i3 = 3*(xz+(256*yz))+2;
-        // eprintln!("DEBUG - ({} {}) ({} {}) ({} {})", i1, r, i2, g, i3, b);
-        self.display[i1] = r;
-        self.display[i2] = g;
-        self.display[i3] = b;
+        let i = (x + 256*y) as usize;
+        self.display[i] = c;
     }
     fn set_vblank(&mut self, new_vblank: bool) {
         let vblank = self.nmi_occurred;

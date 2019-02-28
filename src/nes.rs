@@ -17,12 +17,13 @@ use crate::serialization::Savable;
 
 use std::fs::File;
 use std::io::Read;
+use std::io::Write;
 use std::io;
 use std::fmt;
 use std::ops::DerefMut;
 
 pub struct Nes {
-    cpu: Box<C6502>,
+    pub cpu: Box<C6502>,
     pub apu: Box<Apu>,
     pub ppu: Box<Ppu>,
 }
@@ -187,13 +188,13 @@ impl Clocked for Nes {
 use crate::serialization::file_position;
 
 impl Savable for Nes {
-    fn save(&self, fh: &mut File) {
+    fn save(&self, fh: &mut Write) {
         self.cpu.save(fh);
         self.apu.save(fh);
         self.ppu.save(fh);
         0xF00Fu32.save(fh);
     }
-    fn load(&mut self, fh: &mut File) {
+    fn load(&mut self, fh: &mut Read) {
         self.cpu.load(fh);
         self.apu.load(fh);
         self.ppu.load(fh);

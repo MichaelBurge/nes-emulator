@@ -2,35 +2,69 @@
 
 use std::mem::transmute;
 use sdl2::GameControllerSubsystem;
-use std::fs::File;
+use sdl2::event::Event;
+use std::io::Read;
+use std::io::Write;
 
 use crate::common::get_bit;
 use crate::mapper::AddressSpace;
 use crate::serialization::Savable;
 
 pub struct Joystick {
-    sdl_controller: sdl2::controller::GameController,
+    sdl_controller: Option<sdl2::controller::GameController>,
+    sdl_id: u32,
+    is_software: bool,
     button_mask: u8,
     strobe_active: bool,
 }
 
 impl Savable for Joystick {
-    fn save(&self, fh: &mut File) {
+    fn save(&self, fh: &mut Write) {
         self.button_mask.save(fh);
         self.strobe_active.save(fh);
     }
-    fn load(&mut self, fh: &mut File) {
+    fn load(&mut self, fh: &mut Read) {
         self.button_mask.load(fh);
         self.strobe_active.load(fh);
     }
 }
 
 impl Joystick {
-    pub fn new(subsystem:&GameControllerSubsystem, id:u8) -> Joystick {
+    pub fn new_software() -> Joystick {
         Joystick {
-            sdl_controller: subsystem.open(0).unwrap(),
+            sdl_controller: None,
+            sdl_id: 0,
+            is_software: true,
             button_mask: 0,
             strobe_active: false,
+        }
+    }
+    pub fn new(subsystem:&GameControllerSubsystem, id:u32) -> Joystick {
+        Joystick {
+            sdl_controller: subsystem.open(0).ok(),
+            sdl_id: id,
+            is_software: false,
+            button_mask: 0,
+            strobe_active: false,
+        }
+    }
+    pub fn set_buttons(&mut self, button_mask: u8) {
+        if self.is_software {
+            self.button_mask = button_mask;
+        } else {
+            panic!("Can only override the buttons on software-controlled joysticks");
+        }
+    }
+    pub fn process_event(&mut self, subsystem:&GameControllerSubsystem, event:&Event) {
+        match event {
+            Event::ControllerDeviceAdded { which: id, .. } => {
+                eprintln!("DEBUG - CONTROLLER ADDED - {}", id);
+                if *id == self.sdl_id {
+                    self.sdl_controller = Some(subsystem.open(*id).unwrap());
+                    eprintln!("DEBUG - CONTROLLER ACQUIRED - {}", self.sdl_controller.is_some());
+                }
+            }
+            _ => {},
         }
     }
     fn get_button_bit(&self, button_id:u8) -> u8 {
@@ -46,7 +80,10 @@ impl Joystick {
             7 => sdl2::controller::Button::DPadRight,
             _ => panic!("Unknown button"),
         };
-        return self.sdl_controller.button(button) as u8;
+        match &self.sdl_controller {
+            None => 0,
+            Some(controller) => controller.button(button) as u8,
+        }
     }
     fn refresh_button_mask(&mut self) {
         self.button_mask = 0;
@@ -60,7 +97,7 @@ impl Joystick {
         self.button_mask |= self.get_button_bit(7) << 7;
     }
     fn reset_from_strobe(&mut self) {
-        if self.strobe_active {
+        if self.strobe_active && ! self.is_software {
             self.refresh_button_mask();
         }
     }

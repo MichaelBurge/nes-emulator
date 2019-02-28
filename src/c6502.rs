@@ -11,7 +11,8 @@ use crate::serialization::file_position;
 use std::io;
 use std::mem::transmute;
 use std::mem::transmute_copy;
-use std::fs::File;
+use std::io::Read;
+use std::io::Write;
 
 const ADDRESS_NMI:u16 = 0xFFFA;
 const ADDRESS_RESET:u16 = 0xFFFC;
@@ -42,7 +43,7 @@ pub struct C6502 {
 }
 
 impl Savable for C6502 {
-    fn save(&self, fh: &mut File) {
+    fn save(&self, fh: &mut Write) {
         self.acc.save(fh);
         self.x.save(fh);
         self.y.save(fh);
@@ -60,7 +61,7 @@ impl Savable for C6502 {
         self.is_tracing.save(fh);
         self.clocks_to_pause.save(fh);
     }
-    fn load(&mut self, fh: &mut File) {
+    fn load(&mut self, fh: &mut Read) {
         self.acc.load(fh);
         self.x.load(fh);
         self.y.load(fh);

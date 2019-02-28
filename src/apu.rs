@@ -6,7 +6,8 @@ use crate::mapper::AddressSpace;
 use crate::serialization::Savable;
 
 use std::collections::VecDeque;
-use std::fs::File;
+use std::io::Read;
+use std::io::Write;
 
 // https://wiki.nesdev.com/w/index.php/2A03
 pub enum ApuPort {
@@ -120,10 +121,10 @@ pub struct Apu {
 }
 
 impl Savable for Apu {
-    fn save(&self, fh: &mut File) {
+    fn save(&self, fh: &mut Write) {
         // TODO
     }
-    fn load(&mut self, fh: &mut File) {
+    fn load(&mut self, fh: &mut Read) {
         // TODO
     }
 }

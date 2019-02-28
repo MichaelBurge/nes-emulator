@@ -1,18 +1,19 @@
 use std::fs::File;
 use std::io::Read;
 use std::io::Write;
+use std::default::Default;
 
 pub trait Savable {
-    fn save(&self, fh: &mut File);
-    fn load(&mut self, fh: &mut File);
+    fn save(&self, fh: &mut Write);
+    fn load(&mut self, fh: &mut Read);
 }
 
 impl Savable for bool {
-    fn save(&self, fh: &mut File) {
+    fn save(&self, fh: &mut Write) {
         let bytes = [*self as u8];
         fh.write_all(&bytes);
     }
-    fn load(&mut self, fh: &mut File) {
+    fn load(&mut self, fh: &mut Read) {
         let mut bytes = [0];
         fh.read_exact(&mut bytes);
         *self = bytes[0]>0;
@@ -20,11 +21,11 @@ impl Savable for bool {
 }
 
 impl Savable for u8 {
-    fn save(&self, fh: &mut File) {
+    fn save(&self, fh: &mut Write) {
         let bytes = [*self as u8];
         fh.write_all(&bytes);
     }
-    fn load(&mut self, fh: &mut File) {
+    fn load(&mut self, fh: &mut Read) {
         let mut bytes = [0];
         fh.read_exact(&mut bytes);
         *self = bytes[0];
@@ -32,11 +33,11 @@ impl Savable for u8 {
 }
 
 impl Savable for u16 {
-    fn save(&self, fh: &mut File) {
+    fn save(&self, fh: &mut Write) {
         let bytes = [(*self & 0xff) as u8, ((*self >> 8) & 0xff) as u8];
         fh.write_all(&bytes);
     }
-    fn load(&mut self, fh:&mut File) {
+    fn load(&mut self, fh:&mut Read) {
         let mut bytes = [0; 2];
         fh.read_exact(&mut bytes);
         *self = 0;
@@ -46,7 +47,7 @@ impl Savable for u16 {
 }
 
 impl Savable for u32 {
-    fn save(&self, fh: &mut File) {
+    fn save(&self, fh: &mut Write) {
         let bytes = [
             ((*self >> 0 ) & 0xff) as u8,
             ((*self >> 8 ) & 0xff) as u8,
@@ -55,7 +56,7 @@ impl Savable for u32 {
         ];
         fh.write_all(&bytes);
     }
-    fn load(&mut self, fh: &mut File) {
+    fn load(&mut self, fh: &mut Read) {
         let mut bytes = [0u8; 4];
         fh.read_exact(&mut bytes);
         *self = 0;
@@ -67,7 +68,7 @@ impl Savable for u32 {
 }
 
 impl Savable for u64 {
-    fn save(&self, fh: &mut File) {
+    fn save(&self, fh: &mut Write) {
         let bytes = [
             ((*self >> 0 ) & 0xff) as u8,
             ((*self >> 8 ) & 0xff) as u8,
@@ -80,7 +81,7 @@ impl Savable for u64 {
         ];
         fh.write_all(&bytes);
     }
-    fn load(&mut self, fh: &mut File) {
+    fn load(&mut self, fh: &mut Read) {
         let mut bytes = [0u8; 8];
         fh.read_exact(&mut bytes);
         *self = 0;
@@ -96,10 +97,10 @@ impl Savable for u64 {
 }
 
 impl Savable for usize {
-    fn save(&self, fh: &mut File) {
+    fn save(&self, fh: &mut Write) {
         (*self as u64).save(fh);
     }
-    fn load(&mut self, fh: &mut File) {
+    fn load(&mut self, fh: &mut Read) {
         let mut x:u64 = *self as u64;
         x.load(fh);
         *self = x as usize;
@@ -107,20 +108,26 @@ impl Savable for usize {
 }
 
 impl<T: Savable> Savable for [T] {
-    fn save(&self, fh: &mut File) {
+    fn save(&self, fh: &mut Write) {
         let len:usize = self.len();
         len.save(fh);
         for i in self.iter() {
             i.save(fh);
         }
     }
-    fn load(&mut self, fh: &mut File) {
+    fn load(&mut self, fh: &mut Read) {
         let mut len = 0usize;
         len.load(fh);
         for i in 0..len {
             self[i].load(fh);
         }
     }
+}
+
+pub fn read_value<T: Default + Savable>(fh: &mut Read) -> T {
+    let mut t:T = Default::default();
+    t.load(fh);
+    t
 }
 
 use std::io::SeekFrom;

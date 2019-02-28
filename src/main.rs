@@ -18,9 +18,14 @@ use sdl2::render::Canvas;
 use sdl2::render::Texture;
 use sdl2::render::TextureAccess;
 use sdl2::video::Window;
+use sdl2::EventPump;
+use sdl2::AudioSubsystem;
+use sdl2::VideoSubsystem;
+use sdl2::GameControllerSubsystem;
 use std::ptr::NonNull;
 use std::time::{Duration,Instant};
 use std::fs::File;
+use std::os::raw::c_int;
 
 use crate::joystick::Joystick;
 use crate::mapper::AddressSpace;
@@ -30,35 +35,60 @@ use crate::ppu::*;
 use crate::apu::Apu;
 use crate::serialization::{Savable};
 
+extern {
+    fn emscripten_set_main_loop(
+        m: extern fn(),
+        fps: c_int,
+        infinite: c_int
+    );
+}
+
 // https://wiki.nesdev.com/w/index.php/Cycle_reference_chart
 const CLOCKS_PER_FRAME:u32 = 29780;
 const APU_FREQUENCY:i32 = 240;
 const AUDIO_FREQUENCY:usize = 44100;
-const SAMPLES_PER_FRAME:usize = 2032;
+const SAMPLES_PER_FRAME:usize = 2048;
 const SCALE:usize = 4;
 
-fn main() {
-    let sdl_context = sdl2::init().unwrap();
-    let video_subsystem = sdl_context.video().unwrap();
-    let controller_subsystem = sdl_context.game_controller().unwrap();
-    let audio_subsystem = sdl_context.audio().unwrap();
+struct GlobalState {
+    sdl_context: *mut sdl2::Sdl,
+    joystick1: *mut Joystick,
+    joystick2: *mut Joystick,
+    video_subsystem: *mut VideoSubsystem,
+    audio_subsystem: *mut AudioSubsystem,
+    controller_subsystem: *mut GameControllerSubsystem,
+    canvas: *mut Canvas<Window>,
+    event_pump: *mut EventPump,
+    nes: *mut Nes,
+    audio_device: *mut AudioQueue<f32>,
+    texture: *mut Texture<'static>,
+}
 
-    let joystick1 = Joystick::new(&controller_subsystem, 0);
-    let joystick2 = Joystick::new(&controller_subsystem, 1);
+static mut GLOBAL_STATE:Option<GlobalState> = None;
+
+fn main() {
+    let mut sdl_context  = Box::new(sdl2::init().unwrap());
+    let mut video_subsystem = Box::new(sdl_context.video().unwrap());
+    let mut controller_subsystem = Box::new(sdl_context.game_controller().unwrap());
+    let mut audio_subsystem = Box::new(sdl_context.audio().unwrap());
+    let mut joystick1 = Box::new(Joystick::new(&controller_subsystem, 0));
+    let mut joystick2 = Box::new(Joystick::new(&controller_subsystem, 1));
+    let joystick1_ptr = (&mut *joystick1) as *mut Joystick;
+    let joystick2_ptr = (&mut *joystick2) as *mut Joystick;
     let window = video_subsystem.window("NES emulator", (RENDER_WIDTH*SCALE) as u32, (RENDER_HEIGHT*SCALE) as u32)
         .position_centered()
         .build()
         .unwrap();
 
-    let mut canvas = window.into_canvas().build().unwrap();
+    let mut canvas = Box::new(window.into_canvas().build().unwrap());
     let texture_creator = canvas.texture_creator();
-    let mut texture = texture_creator.create_texture(
+    let mut texture = Box::new(texture_creator.create_texture(
         PixelFormatEnum::RGB24,
         TextureAccess::Streaming,
         RENDER_WIDTH as u32,
         RENDER_HEIGHT as u32
-    ).unwrap();
-    let mut nes = create_nes(Box::new(joystick1), Box::new(joystick2));
+    ).unwrap());
+    let mut nes = Box::new(create_nes(joystick1, joystick2));
 
     let desired_spec = AudioSpecDesired {
         freq: Some(AUDIO_FREQUENCY as i32),
@@ -67,7 +97,6 @@ fn main() {
         samples: Some(SAMPLES_PER_FRAME as u16),
     };
 
-    let audio_device = audio_subsystem.open_queue(None, &desired_spec).unwrap();
     // let audio_device = audio_subsystem.open_playback(None, &desired_spec, |spec| {
     //     ApuSampler {
     //         apu: NonNull::from(&mut nes.apu),
@@ -81,56 +110,96 @@ fn main() {
     canvas.set_draw_color(Color::RGB(0, 255, 255));
     canvas.clear();
     canvas.present();
+
+    let mut audio_device = Box::new(audio_subsystem.open_queue(None, &desired_spec).unwrap());
     audio_device.resume();
-    let mut event_pump = sdl_context.event_pump().unwrap();
-    let mut i = 0;
-    'running: loop {
-        i = (i + 1) % 255;
-        canvas.set_draw_color(Color::RGB(i, 64, 255 - i));
-        canvas.clear();
-        for event in event_pump.poll_iter() {
-            match event {
-                Event::Quit {..} |
-                Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
-                    break 'running
-                },
-                Event::KeyDown { keycode: Some(Keycode::Pause), .. } => {
-                    nes.break_debugger();
-                },
-                Event::KeyDown { keycode: Some(Keycode::F5), .. } => {
-                    let mut file = File::create("save.state").unwrap();
-                    nes.save(&mut file);
-                },
-                Event::KeyDown { keycode: Some(Keycode::F6), .. } => {
-                    let mut file = File::open("save.state").unwrap();
-                    nes.load(&mut file);
-                },
-                _ => {}
-            }
-        }
-        // The rest of the game loop goes here...
-        //audio_device.pause();
-        let now = Instant::now();
-        nes.run_frame();
-
-        // eprintln!("DEBUG - NUM SAMPLES {} {}", nes.apu.samples.len(), audio_device.size());
-        present_frame(&mut canvas, &mut texture, &nes.ppu.display);
-        //audio_device.resume();
-        //eprintln!("DEBUG - SAMPLE SIZE - {}", nes.apu.samples.len());
-        enqueue_frame_audio(&audio_device, &mut nes.apu.samples);
-        let after = Instant::now();
-        let target_millis = Duration::from_millis(1000 / 60);
-        let sleep_millis = target_millis.checked_sub(after - now);
-
-        match sleep_millis {
-            None => {}, // Took too long last frame
-            Some(sleep_millis) => {
-                //eprintln!("DEBUG - SLEEP - {:?}", sleep_millis);
-                ::std::thread::sleep(sleep_millis);
-            }
-        }
-        canvas.present();
+    let mut event_pump = Box::new(sdl_context.event_pump().unwrap());
+    unsafe {
+    GLOBAL_STATE = Some(GlobalState {
+        sdl_context: &mut *sdl_context,
+        joystick1: joystick1_ptr,
+        joystick2: joystick2_ptr,
+        video_subsystem: &mut *video_subsystem,
+        audio_subsystem: &mut *audio_subsystem,
+        controller_subsystem: &mut *controller_subsystem,
+        canvas: &mut *canvas,
+        event_pump: &mut *event_pump,
+        nes: &mut *nes,
+        audio_device: &mut *audio_device,
+        texture: &mut *texture,
+    });
     }
+
+    if cfg!(target_os = "emscripten") {
+        // void emscripten_set_main_loop(em_callback_func func, int fps, int simulate_infinite_loop);
+        unsafe { emscripten_set_main_loop(main_loop, 60, 1) };
+    } else {
+        let mut every_second = Instant::now();
+        let mut num_frames = 0;
+        loop {
+            let now = Instant::now();
+            main_loop();
+            let after = Instant::now();
+            let target_millis = Duration::from_millis(1000 / 60);
+            let sleep_millis = target_millis.checked_sub(after - now);
+            match sleep_millis {
+                None => {}, // Took too long last frame
+                Some(sleep_millis) => {
+                    //eprintln!("DEBUG - SLEEP - {:?}", sleep_millis);
+                    ::std::thread::sleep(sleep_millis);
+                }
+            }
+            num_frames += 1;
+            if after - every_second >= Duration::from_millis(1000) {
+                eprintln!("DEBUG - FPS - {} {:?} {:?}", num_frames, after - every_second, after - now);
+                num_frames = 0;
+                every_second = after;
+            }
+            //SDL_Delay(time_to_next_frame());
+        }
+    }
+}
+
+extern fn main_loop() {
+    let st = unsafe { GLOBAL_STATE.as_ref().unwrap() };
+    let mut sdl_context = unsafe { &mut *st.sdl_context };
+    let mut joystick1 = unsafe { &mut *st.joystick1 };
+    let mut joystick2 = unsafe { &mut *st.joystick2 };
+    let mut nes = unsafe { &mut *st.nes };
+    let mut event_pump = unsafe { &mut *st.event_pump };
+    let mut audio_device = unsafe { &mut *st.audio_device };
+    let mut canvas = unsafe { &mut *st.canvas };
+    let mut texture = unsafe { &mut *st.texture };
+    let mut controller_subsystem = unsafe { &mut *st.controller_subsystem };
+
+    for event in event_pump.poll_iter() {
+        match event {
+            Event::Quit {..} |
+            Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
+                std::process::exit(0);
+            },
+            Event::KeyDown { keycode: Some(Keycode::Pause), .. } => {
+                nes.break_debugger();
+            },
+            Event::KeyDown { keycode: Some(Keycode::F5), .. } => {
+                let mut file = File::create("save.state").unwrap();
+                nes.save(&mut file);
+            },
+            Event::KeyDown { keycode: Some(Keycode::F6), .. } => {
+                let mut file = File::open("save.state").unwrap();
+                nes.load(&mut file);
+            },
+            _ => {}
+        }
+        joystick1.process_event(&controller_subsystem, &event);
+        joystick2.process_event(&controller_subsystem, &event);
+    }
+
+    nes.run_frame();
+    present_frame(&mut canvas, &mut texture, &nes.ppu.render());
+    enqueue_frame_audio(&audio_device, &mut nes.apu.samples);
+
+    canvas.present();
 }
 
 struct ApuSampler {
@@ -157,7 +226,6 @@ impl ApuSampler {
         let ratio = num_samples as f32 / num_resamples as f32;
         let mut t = 0.0f32;
         let mut sample_idx = 0;
-        let mut num_skip = 0;
         for i in resamples.iter_mut() {
             *i = match samples.get(sample_idx) {
                 None => *last_sample,
@@ -231,8 +299,10 @@ impl AudioCallback for ApuSampler {
 fn create_nes(joystick1:Box<AddressSpace>, joystick2:Box<AddressSpace>) -> Nes {
     //let filename = "roms/donkey_kong.nes";
     let filename = "roms/mario.nes";
-    let rom = read_ines(filename.to_string()).unwrap();
-    return load_ines(rom, joystick1, joystick2);
+    match read_ines(filename.to_string()) {
+        e @ Err {..} => panic!("Unable to load ROM {} {:?}", filename, e),
+        Ok(rom) => load_ines(rom, joystick1, joystick2),
+    }
 }
 
 fn present_frame(canvas: &mut Canvas<Window>, texture: &mut Texture, ppu_pixels: &[u8]) {
@@ -243,7 +313,7 @@ fn present_frame(canvas: &mut Canvas<Window>, texture: &mut Texture, ppu_pixels:
 }
 
 fn enqueue_frame_audio(audio:&AudioQueue<f32>, samples:&mut Vec<f32>) {
-    let mut xs = samples.as_slice();
+    let xs = samples.as_slice();
     if audio.size() as usize <= 4*SAMPLES_PER_FRAME {
         audio.queue(&xs);
     }

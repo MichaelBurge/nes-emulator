@@ -2,7 +2,8 @@
 
 use std::cell::UnsafeCell;
 use std::borrow::BorrowMut;
-use std::fs::File;
+use std::io::Read;
+use std::io::Write;
 
 use crate::serialization::Savable;
 
@@ -42,10 +43,10 @@ impl Ram {
 }
 
 impl Savable for Ram {
-    fn save(&self, fh: &mut File) {
+    fn save(&self, fh: &mut Write) {
         self.bs.save(fh);
     }
-    fn load(&mut self, fh: &mut File) {
+    fn load(&mut self, fh: &mut Read) {
         self.bs.load(fh);
     }
 }
@@ -72,8 +73,8 @@ impl<T:AddressSpace> AddressSpace for *mut T {
 
 impl<T:AddressSpace> Savable for *mut T {
     // The pointer should still be valid, since this Trait updates objects in-place.
-    fn save(&self, _:&mut File) { }
-    fn load(&mut self, _:&mut File) { }
+    fn save(&self, _:&mut Write) { }
+    fn load(&mut self, _:&mut Read) { }
 }
 
 pub struct Rom {
@@ -87,10 +88,10 @@ impl Rom {
 }
 
 impl Savable for Rom {
-    fn save(&self, fh: &mut File) {
+    fn save(&self, fh: &mut Write) {
         self.bs.save(fh);
     }
-    fn load(&mut self, fh: &mut File) {
+    fn load(&mut self, fh: &mut Read) {
         self.bs.load(fh);
     }
 }
@@ -126,14 +127,14 @@ impl MirroredAddressSpace {
 }
 
 impl Savable for MirroredAddressSpace {
-    fn save(&self, fh: &mut File) {
+    fn save(&self, fh: &mut Write) {
         self.base.save(fh);
         self.base_begin.save(fh);
         self.base_end.save(fh);
         self.extended_begin.save(fh);
         self.extended_end.save(fh);
     }
-    fn load(&mut self, fh: &mut File) {
+    fn load(&mut self, fh: &mut Read) {
         self.base.load(fh);
         self.base_begin.load(fh);
         self.base_end.load(fh);
@@ -160,8 +161,8 @@ impl NullAddressSpace {
 }
 
 impl Savable for NullAddressSpace {
-    fn save(&self, fh: &mut File) { }
-    fn load(&mut self, fh: &mut File) { }
+    fn save(&self, fh: &mut Write) {}
+    fn load(&mut self, fh: &mut Read) { }
 }
 
 impl AddressSpace for NullAddressSpace {
@@ -178,13 +179,13 @@ type UsesOriginalAddress = bool;
 struct Mapping(u16, u16, Box<dyn AddressSpace>, UsesOriginalAddress);
 
 impl Savable for Mapping {
-    fn save(&self, fh: &mut File) {
+    fn save(&self, fh: &mut Write) {
         self.0.save(fh);
         self.1.save(fh);
         self.2.save(fh);
         self.3.save(fh);
     }
-    fn load(&mut self, fh: &mut File) {
+    fn load(&mut self, fh: &mut Read) {
         self.0.load(fh);
         self.1.load(fh);
         self.2.load(fh);
@@ -197,10 +198,10 @@ pub struct Mapper {
 }
 
 impl Savable for Mapper {
-    fn save(&self, fh: &mut File) {
+    fn save(&self, fh: &mut Write) {
         self.mappings.as_slice().save(fh);
     }
-    fn load(&mut self, fh: &mut File) {
+    fn load(&mut self, fh: &mut Read) {
         self.mappings.as_mut_slice().load(fh);
     }
 }
@@ -293,8 +294,8 @@ pub struct LoggedAddressSpace {
 }
 
 impl Savable for LoggedAddressSpace {
-    fn save(&self, fh: &mut File) { panic!("save() unimplemented"); }
-    fn load(&mut self, fh: &mut File) { panic!("load() unimplemented"); }
+    fn save(&self, fh: &mut Write) { panic!("save() unimplemented"); }
+    fn load(&mut self, fh: &mut Read) { panic!("load() unimplemented"); }
 }
 
 impl LoggedAddressSpace {
