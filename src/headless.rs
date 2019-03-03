@@ -12,6 +12,8 @@ use std::io::stdout;
 use std::io::stdin;
 use std::io::Write;
 use std::fs::File;
+use std::fmt::Debug;
+use std::os::unix::io::FromRawFd;
 
 use crate::joystick::Joystick;
 use crate::mapper::AddressSpace;
@@ -23,9 +25,12 @@ use crate::serialization::read_value;
 use crate::common::Clocked;
 
 fn main() {
+    // Standard stdout() object is line-buffered
+    let stdin = unsafe { File::from_raw_fd(0) };
+    let stdout = unsafe { File::from_raw_fd(1) };
     let mut headless = Headless::new(
-        Box::new(stdin()),
-        Box::new(stdout())
+        Box::new(stdin),
+        Box::new(stdout),
     );
     loop { headless.dispatch_command() }
 }
@@ -36,6 +41,8 @@ struct Headless {
     nes: Option<Box<Nes>>,
     in_fh: Box<Read>,
     out_fh: Box<Write>,
+    is_synchronized: bool,
+    num_commands: u64,
 }
 
 impl Headless {
@@ -49,23 +56,31 @@ impl Headless {
             nes: nes,
             in_fh: in_fh,
             out_fh: out_fh,
+            is_synchronized: true,
+            num_commands: 0,
         }
     }
     fn dispatch_command(&mut self) {
         let b = self.read_byte();
         match b {
-            0  => self.command_load_rom(),
-            1  => self.command_step_frame(),
-            2  => self.command_render_frame(),
-            3  => self.command_set_inputs(),
-            4  => self.command_save_state(),
-            5  => self.command_load_state(),
-            6  => self.command_get_info(),
-            7  => self.command_step(),
-            8  => self.command_save_tas(),
-            9  => self.command_peek(),
-            10 => self.command_poke(),
-            _ => panic!("Unknown command"),
+            0  => panic!("'Abort with error' received. Check for synchronization issues."),
+            1  => self.command_load_rom(),
+            2  => self.command_step_frame(),
+            3  => self.command_render_frame(),
+            4  => self.command_set_inputs(),
+            5  => self.command_save_state(),
+            6  => self.command_load_state(),
+            7  => self.command_get_info(),
+            8  => self.command_step(),
+            9  => self.command_save_tas(),
+            10  => self.command_peek(),
+            11 => self.command_poke(),
+            _ => panic!("Unknown command {}", b),
+        }
+        self.num_commands += 1;
+        if self.is_synchronized {
+            let x = (self.num_commands % 256) as u8;
+            x.save(&mut self.out_fh);
         }
     }
 
@@ -74,9 +89,13 @@ impl Headless {
         let filename = self.read_length_string();
         let j1 = &mut *self.joystick1 as *mut Joystick;
         let j2 = &mut *self.joystick2 as *mut Joystick;
-        let ines = read_ines(filename).unwrap();
-        let nes = load_ines(ines, Box::new(j1), Box::new(j2));
-        self.nes = Some(Box::new(nes));
+        match read_ines(filename.clone()) {
+            Ok(ines) => {
+                let nes = load_ines(ines, Box::new(j1), Box::new(j2));
+                self.nes = Some(Box::new(nes));
+            }
+            x@Err{..} => panic!("Error loading rom file {:?} - {:?}", filename, x),
+        }
     }
     fn command_step_frame(&mut self) {
         self.nes.as_mut().unwrap().run_frame();
@@ -92,6 +111,7 @@ impl Headless {
     }
     fn command_set_inputs(&mut self) {
         let button_mask = self.read_byte();
+        self.read_byte();
         self.joystick1.set_buttons(button_mask);
     }
     fn command_save_state(&mut self) {
@@ -123,8 +143,9 @@ impl Headless {
         self.nes.as_mut().unwrap().cpu.poke(ptr, v)
     }
 
-    fn read_value<T:Default + Savable>(&mut self) -> T {
-        read_value::<T>(&mut self.in_fh)
+    fn read_value<T:Default + Savable + Debug>(&mut self) -> T {
+        let x = read_value::<T>(&mut self.in_fh);
+        x
     }
     fn read_byte(&mut self) -> u8 {
         self.read_value::<u8>()

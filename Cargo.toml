@@ -12,5 +12,12 @@ path = "src/headless.rs"
 name = "nes-emulator"
 path = "src/main.rs"
 
+[[bin]]
+name = "bench"
+path = "src/bench.rs"
+
 [dependencies]
 sdl2 = "0.32"
+
+[profile.release]
+opt-level = 3

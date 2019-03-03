@@ -218,20 +218,19 @@ impl Mapper {
             eprintln!("[{:x}, {:x}] - {:?}", range_begin, range_end, use_original_address);
         }
     }
+
     fn lookup_address_space(&self, ptr: u16) -> (usize, u16) {
         let mut last_range_end = 0;
-        for (Mapping(range_begin, range_end, _, use_original_address),
-             space_idx) in
-            self.mappings.iter()
-            .zip(0..self.mappings.len()) {
-                last_range_end = *range_end;
-                if ptr >= *range_begin && ptr <= *range_end {
-                    let space_ptr =
-                        if *use_original_address { ptr }
-                    else { (ptr - *range_begin) };
-                    return (space_idx, space_ptr);
-                }
+        for space_idx in 0..self.mappings.len() {
+            let Mapping(range_begin, range_end, _, use_original_address) = self.mappings[space_idx];
+            last_range_end = range_end;
+            if ptr >= range_begin && ptr <= range_end {
+                let space_ptr =
+                    if use_original_address { ptr }
+                else { (ptr - range_begin) };
+                return (space_idx, space_ptr);
             }
+        }
         eprintln!("lookup_address_space - Unmapped pointer {:?}.", ptr);
         eprintln!("Mappings:");
         self.print_mappings();
