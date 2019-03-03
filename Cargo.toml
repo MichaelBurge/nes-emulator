@@ -4,20 +4,20 @@ version = "0.1.0"
 authors = ["Michael Burge <michaelburge@pobox.com>"]
 edition = "2018"
 
-[[bin]]
-name = "headless"
-path = "src/headless.rs"
+# [[bin]]
+# name = "headless"
+# path = "src/headless.rs"
 
-[[bin]]
-name = "nes-emulator"
-path = "src/main.rs"
+# [[bin]]
+# name = "nes-emulator"
+# path = "src/main.rs"
 
 [[bin]]
 name = "bench"
 path = "src/bench.rs"
 
-[dependencies]
-sdl2 = "0.32"
+# [dependencies]
+# sdl2 = "0.32"
 
 [profile.release]
 opt-level = 3

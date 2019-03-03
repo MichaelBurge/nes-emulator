@@ -3,11 +3,8 @@
 use crate::common::*;
 use crate::mapper::{AddressSpace, Mapper};
 use crate::c6502::C6502;
-use crate::serialization::Savable;
 
-use std::mem::transmute;
-use std::io::Read;
-use std::io::Write;
+use core::mem::transmute;
 
 //use std::vec;
 
@@ -42,7 +39,7 @@ pub const RENDER_SIZE:usize = UNRENDER_SIZE * 3;
 pub struct Ppu {
     pub display: [u8; RENDER_SIZE],
     pub oam: [u8; 256],
-    pub mapper: Box<dyn AddressSpace>,
+    pub mapper: *mut AddressSpace,
     pub is_vblank_nmi: bool,
     pub is_scanline_irq: bool,
 
@@ -81,81 +78,6 @@ pub struct Ppu {
     sprite_indices: [u8;8],
 }
 
-impl Savable for Ppu {
-    fn save(&self, fh: &mut Write) {
-        self.oam.save(fh);
-        self.mapper.save(fh);
-        self.is_vblank_nmi.save(fh);
-        self.is_scanline_irq.save(fh);
-        self.registers.save(fh);
-        self.sprite_pattern_table.save(fh);
-        self.background_pattern_table.save(fh);
-        self.sprite_overflow.save(fh);
-        self.sprite0_hit.save(fh);
-        self.sprite_size.save(fh);
-        self.frame_parity.save(fh);
-        self.open_bus.save(fh);
-        self.ppu_master_select.save(fh);
-        self.generate_vblank_nmi.save(fh);
-        self.ppudata_buffer.save(fh);
-        self.oam_ptr.save(fh);
-        self.clocks_until_nmi.save(fh);
-        self.nmi_occurred.save(fh);
-        self.frame.save(fh);
-        self.scanline.save(fh);
-        self.cycle.save(fh);
-        self.sprite_count.save(fh);
-        self.tile_pattern_low_shift.save(fh);
-        self.tile_pattern_high_shift.save(fh);
-        self.tile_palette_shift.save(fh);
-        self.tile_nametable.save(fh);
-        self.tile_attribute.save(fh);
-        self.tile_pattern_low.save(fh);
-        self.tile_pattern_high.save(fh);
-        self.sprite_patterns.save(fh);
-        self.sprite_palettes.save(fh);
-        self.sprite_xs.save(fh);
-        self.sprite_priorities.save(fh);
-        self.sprite_indices.save(fh);
-    }
-    fn load(&mut self, fh: &mut Read) {
-        self.oam.load(fh);
-        self.mapper.load(fh);
-        self.is_vblank_nmi.load(fh);
-        self.is_scanline_irq.load(fh);
-        self.registers.load(fh);
-        self.sprite_pattern_table.load(fh);
-        self.background_pattern_table.load(fh);
-        self.sprite_overflow.load(fh);
-        self.sprite0_hit.load(fh);
-        self.sprite_size.load(fh);
-        self.frame_parity.load(fh);
-        self.open_bus.load(fh);
-        self.ppu_master_select.load(fh);
-        self.generate_vblank_nmi.load(fh);
-        self.ppudata_buffer.load(fh);
-        self.oam_ptr.load(fh);
-        self.clocks_until_nmi.load(fh);
-        self.nmi_occurred.load(fh);
-        self.frame.load(fh);
-        self.scanline.load(fh);
-        self.cycle.load(fh);
-        self.sprite_count.load(fh);
-        self.tile_pattern_low_shift.load(fh);
-        self.tile_pattern_high_shift.load(fh);
-        self.tile_palette_shift.load(fh);
-        self.tile_nametable.load(fh);
-        self.tile_attribute.load(fh);
-        self.tile_pattern_low.load(fh);
-        self.tile_pattern_high.load(fh);
-        self.sprite_patterns.load(fh);
-        self.sprite_palettes.load(fh);
-        self.sprite_xs.load(fh);
-        self.sprite_priorities.load(fh);
-        self.sprite_indices.load(fh);
-    }
-}
-
 struct PpuRegisters {
     // Register is only 15 bits in hardware.
     /*
@@ -179,41 +101,6 @@ struct PpuRegisters {
     emphasize_blue: bool,
     show_leftmost_background: bool,
     show_leftmost_sprite: bool,
-}
-
-impl Savable for PpuRegisters {
-    fn save(&self, fh: &mut Write) {
-        self.v.save(fh);
-        self.t.save(fh);
-        self.x.save(fh);
-        self.w.save(fh);
-
-        self.vram_increment.save(fh);
-        self.is_greyscale.save(fh);
-        self.background_enabled.save(fh);
-        self.sprites_enabled.save(fh);
-        self.emphasize_red.save(fh);
-        self.emphasize_green.save(fh);
-        self.emphasize_blue.save(fh);
-        self.show_leftmost_background.save(fh);
-        self.show_leftmost_sprite.save(fh);
-    }
-    fn load(&mut self, fh: &mut Read) {
-        self.v.load(fh);
-        self.t.load(fh);
-        self.x.load(fh);
-        self.w.load(fh);
-
-        self.vram_increment.load(fh);
-        self.is_greyscale.load(fh);
-        self.background_enabled.load(fh);
-        self.sprites_enabled.load(fh);
-        self.emphasize_red.load(fh);
-        self.emphasize_green.load(fh);
-        self.emphasize_blue.load(fh);
-        self.show_leftmost_background.load(fh);
-        self.show_leftmost_sprite.load(fh);
-    }
 }
 
 impl PpuRegisters {
@@ -253,7 +140,6 @@ impl PpuRegisters {
     }
 
     pub fn increment_x(&mut self) {
-        let v = self.v;
         if (self.v & 0x001F) == 31 {
             self.v &= !0x001F;
             self.v ^= 0x0400;
@@ -407,8 +293,8 @@ pub enum PpuPort {
 }
 
 impl AddressSpace for Ppu {
-    fn peek(&self, ptr:u16) -> u8 { return self.mapper.peek(ptr); }
-    fn poke(&mut self, ptr:u16, v:u8) { self.mapper.poke(ptr, v); }
+    fn peek(&self, ptr:u16) -> u8 { return unsafe { (*self.mapper).peek(ptr) }; }
+    fn poke(&mut self, ptr:u16, v:u8) { unsafe { (*self.mapper).poke(ptr, v) };}
 }
 
 #[derive(Copy, Clone)]
@@ -436,7 +322,7 @@ fn combine_bitplanes(mut a:u8, mut b:u8) -> u16 {
 
 fn reverse_bits(mut a:u8) -> u8 {
     let mut out = 0u8;
-    for i in 0..8 {
+    for _ in 0..8 {
         out <<= 1;
         out |= a&1;
         a >>= 1;
@@ -446,23 +332,12 @@ fn reverse_bits(mut a:u8) -> u8 {
 
 #[derive(Copy, Clone)]
 pub struct CpuPpuInterconnect {
-    ppu: *mut Ppu,
-    cpu: *mut C6502,
-}
-
-impl Savable for CpuPpuInterconnect {
-    fn save(&self, fh: &mut Write) {
-        self.ppu.save(fh);
-        self.cpu.save(fh);
-    }
-    fn load(&mut self, fh: &mut Read) {
-        self.ppu.load(fh);
-        self.cpu.load(fh);
-    }
+    pub ppu: *mut Ppu,
+    pub cpu: *mut C6502,
 }
 
 impl CpuPpuInterconnect {
-    pub fn new(ppu: &mut Ppu, cpu: &mut C6502) -> CpuPpuInterconnect {
+    pub fn new(ppu: *mut Ppu, cpu: *mut C6502) -> CpuPpuInterconnect {
         CpuPpuInterconnect { ppu: ppu, cpu: cpu }
     }
 }
@@ -528,7 +403,7 @@ impl AddressSpace for CpuPpuInterconnect {
 }
 
 pub struct PaletteControl {
-    memory: [u8;32],
+    pub memory: [u8;32],
 }
 
 impl PaletteControl {
@@ -544,15 +419,6 @@ impl PaletteControl {
             _ => ptr,
         };
         return (remapped - 0x3f00) as usize;
-    }
-}
-
-impl Savable for PaletteControl {
-    fn save(&self, fh:&mut Write) {
-        self.memory.save(fh);
-    }
-    fn load(&mut self, fh:&mut Read) {
-        self.memory.load(fh);
     }
 }
 
@@ -673,12 +539,11 @@ impl PaletteColor {
 
 // https://wiki.nesdev.com/w/index.php/PPU_rendering
 impl Ppu {
-    pub fn new() -> Ppu {
-        let mapper = Mapper::new();
+    pub fn new(mapper: *mut AddressSpace) -> Ppu {
         Ppu {
             display: [0; RENDER_SIZE],
             oam: [0; 256],
-            mapper: Box::new(mapper),
+            mapper: mapper,
             is_vblank_nmi: false,
             is_scanline_irq: false,
 
@@ -734,7 +599,6 @@ impl Ppu {
     // }
 
     fn shift_new_tile(&mut self) {
-        let background_tile = self.tile_nametable;
         let attribute = self.tile_attribute;
         let idx_x = self.registers.tile_x();
         let idx_y = self.registers.tile_y();
@@ -872,7 +736,7 @@ impl Ppu {
     }
 
     fn evaluate_sprites(&mut self) {
-        let height = ternary(self.sprite_size, 16, 8);
+        let _height = ternary(self.sprite_size, 16, 8); // TODO - Use this
 
         let mut count = 0;
         for i in 0..64 {
@@ -942,12 +806,14 @@ impl Ppu {
         return (tile_row0, tile_row1);
     }
 
-    fn fetch_scanline_sprites(&mut self, y: u16) -> Vec<Sprite> {
-        let mut vec = Vec::new();
+    fn fetch_scanline_sprites(&mut self, y: u16) -> [Option<Sprite>; 8] {
+        let mut vec = [None; 8];
+        let mut next_vec_idx = 0;
         for i in 0..64 {
             let sprite = self.lookup_sprite(i);
             if y >= sprite.y as u16 && y < (sprite.y as u16 + SPRITE_HEIGHT as u16) {
-                vec.push(sprite);
+                vec[next_vec_idx] = Some(sprite);
+                next_vec_idx += 1;
             }
             if vec.len() >= 8 {
                 self.sprite_overflow = true;
@@ -957,7 +823,7 @@ impl Ppu {
         return vec;
     }
 
-    fn find_matching_sprite(&self, x: u16, sprites: &Vec<Sprite>) -> Option<Sprite> {
+    fn find_matching_sprite(&self, x: u16, sprites: &[Sprite]) -> Option<Sprite> {
         for sprite in sprites {
             if x >= (sprite.x as u16) && x < (sprite.x as u16 + SPRITE_WIDTH as u16) {
                 return Some(sprite.clone());
@@ -994,15 +860,6 @@ impl Ppu {
         };
         //eprintln!("DEBUG - ATTRIBUTE ENTRY - {:x} {}", entry, palette_id);
         return palette_id;
-    }
-
-    fn debug_print_attribute_table(&self, nametable:u8) {
-        // for idx_x in 0..=32 {
-        //     for idx_y in 0..=30 {
-        //         let palette_id = self.lookup_attribute_table(nametable, idx_x, idx_y);
-        //         //eprintln!("DEBUG - PALETTE ID - {} {} {}", idx_x, idx_y, palette_id);
-        //     }
-        // }
     }
 
     pub fn write_control(&mut self, v:u8) {

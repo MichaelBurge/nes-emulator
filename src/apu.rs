@@ -3,11 +3,8 @@
 
 use crate::common::{Clocked, ternary, get_bit};
 use crate::mapper::AddressSpace;
-use crate::serialization::Savable;
 
-use std::collections::VecDeque;
-use std::io::Read;
-use std::io::Write;
+use core::ops::DerefMut;
 
 // https://wiki.nesdev.com/w/index.php/2A03
 pub enum ApuPort {
@@ -108,7 +105,6 @@ impl Clocked for FrameCounter {
 }
 
 pub struct Apu {
-    pub samples:Vec<f32>,
     cycle:u64,
     sample_rate:f64,
     sample_timer:f64,
@@ -118,15 +114,6 @@ pub struct Apu {
     triangle:Triangle,
     noise:Noise,
     dmc:Dmc,
-}
-
-impl Savable for Apu {
-    fn save(&self, fh: &mut Write) {
-        // TODO
-    }
-    fn load(&mut self, fh: &mut Read) {
-        // TODO
-    }
 }
 
 impl Clocked for Apu {
@@ -154,9 +141,9 @@ impl Clocked for Apu {
             self.dmc.clock_half_frame();
         }
         if self.sample_timer >= 1.0 {
-            let sample = self.sample();
+            let _sample = self.sample();
             //let sample = 0.1;
-            self.samples.push(sample);
+            //self.samples.push(sample);
             self.sample_timer %= 1.0;
         }
         self.sample_timer += self.sample_rate;
@@ -168,7 +155,6 @@ impl Apu {
     pub fn new() -> Apu {
         Apu {
             cycle: 0,
-            samples: Vec::new(),
             sample_rate: 1024.0 / 30000.0,
             sample_timer: 0.0,
             frame_counter: FrameCounter::new(),
@@ -788,7 +774,7 @@ impl Dmc {
         // TODO
         false
     }
-    pub fn set_enabled(&mut self, v:bool) {
+    pub fn set_enabled(&mut self, _v:bool) {
         // TODO
     }
     pub fn clock_half_frame(&mut self) {

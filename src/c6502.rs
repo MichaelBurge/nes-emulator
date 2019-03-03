@@ -4,15 +4,8 @@
 use crate::common::{run_clocks, Clocked, get_bit};
 use crate::mapper::AddressSpace;
 use crate::mapper::NullAddressSpace;
-use crate::mapper::LoggedAddressSpace;
-use crate::serialization::Savable;
-use crate::serialization::file_position;
 
-use std::io;
-use std::mem::transmute;
-use std::mem::transmute_copy;
-use std::io::Read;
-use std::io::Write;
+use core::mem::transmute;
 
 const ADDRESS_NMI:u16 = 0xFFFA;
 const ADDRESS_RESET:u16 = 0xFFFC;
@@ -34,7 +27,7 @@ pub struct C6502 {
     decimal: bool,
     overflow: bool,
     negative: bool,
-    pub mapper: Box<AddressSpace>,
+    pub mapper: &'static mut AddressSpace,
     pub counter: usize,
     pub clocks: usize,
     debugger: C6502Debugger,
@@ -42,47 +35,8 @@ pub struct C6502 {
     clocks_to_pause: u16,
 }
 
-impl Savable for C6502 {
-    fn save(&self, fh: &mut Write) {
-        self.acc.save(fh);
-        self.x.save(fh);
-        self.y.save(fh);
-        self.pc.save(fh);
-        self.sp.save(fh);
-        self.carry.save(fh);
-        self.zero.save(fh);
-        self.interruptd.save(fh);
-        self.decimal.save(fh);
-        self.overflow.save(fh);
-        self.negative.save(fh);
-        self.mapper.save(fh);
-        self.counter.save(fh);
-        self.clocks.save(fh);
-        self.is_tracing.save(fh);
-        self.clocks_to_pause.save(fh);
-    }
-    fn load(&mut self, fh: &mut Read) {
-        self.acc.load(fh);
-        self.x.load(fh);
-        self.y.load(fh);
-        self.pc.load(fh);
-        self.sp.load(fh);
-        self.carry.load(fh);
-        self.zero.load(fh);
-        self.interruptd.load(fh);
-        self.decimal.load(fh);
-        self.overflow.load(fh);
-        self.negative.load(fh);
-        self.mapper.load(fh);
-        self.counter.load(fh);
-        self.clocks.load(fh);
-        self.is_tracing.load(fh);
-        self.clocks_to_pause.load(fh);
-    }
-}
-
 impl C6502 {
-    pub fn new(mapper: Box<AddressSpace>) -> C6502 {
+    pub fn new(mapper: &'static mut AddressSpace) -> C6502 {
         return C6502 {
             acc: 0,
             x: 0,
@@ -123,28 +77,28 @@ impl C6502Debugger {
         }
     }
     fn prompt(&mut self) {
-        let mut input = String::new();
-        self.break_step = false;
-        self.break_nmi = false;
-        self.break_irq = false;
-        eprint!("> ");
-        match io::stdin().read_line(&mut input) {
-            Ok(n) => {
-                match input.as_ref() {
-                    "e\n" => panic!("Requested quit"),
-                    "s\n" => self.break_step = true,
-                    "v\n" => self.break_nmi = true,
-                    "sc\n" => self.break_irq = true,
-                    "\n" => self.break_step = true,
-                    "c\n" => {},
-                    i => {
-                        eprintln!("Unknown command '{:?}'", i);
-                        self.prompt();
-                    },
-                }
-            }
-            Err(x) => { panic!("Error reading input {}", x); },
-        }
+        // let mut input = String::new();
+        // self.break_step = false;
+        // self.break_nmi = false;
+        // self.break_irq = false;
+        // eprint!("> ");
+        // match io::stdin().read_line(&mut input) {
+        //     Ok(n) => {
+        //         match input.as_ref() {
+        //             "e\n" => panic!("Requested quit"),
+        //             "s\n" => self.break_step = true,
+        //             "v\n" => self.break_nmi = true,
+        //             "sc\n" => self.break_irq = true,
+        //             "\n" => self.break_step = true,
+        //             "c\n" => {},
+        //             i => {
+        //                 eprintln!("Unknown command '{:?}'", i);
+        //                 self.prompt();
+        //             },
+        //         }
+        //     }
+        //     Err(x) => { panic!("Error reading input {}", x); },
+        // }
     }
     pub fn on_step(&mut self, cpu: &C6502, num_bytes:u16, i:&Instruction) {
         if self.break_step {
@@ -154,13 +108,11 @@ impl C6502Debugger {
     }
     pub fn on_nmi(&mut self) {
         if self.break_nmi {
-            eprintln!("DEBUG - VBLANK");
             self.prompt();
         }
     }
     pub fn on_irq(&mut self) {
         if self.break_irq {
-            eprintln!("DEBUG - SCANLINE");
             self.prompt();
         }
     }
@@ -532,7 +484,6 @@ impl Clocked for C6502 {
             self.clocks_to_pause -= 1;
             return;
         }
-        let ptr = self.pc;
         let (i, num_bytes) = self.decode_instruction();
         if self.is_tracing
         { self.print_trace_line(num_bytes, &i); }
@@ -580,26 +531,26 @@ impl C6502 {
         self.clocks_to_pause = num_clocks;
     }
 
-    fn print_trace_line(&self, num_bytes:u16, i:&Instruction) {
-        let ptr = self.pc;
-        let bytes:u32 = match num_bytes {
-            1 => self.peek(ptr) as u32,
-            2 => ((self.peek(ptr) as u32)                 << 8) |
-                 ((self.peek(ptr.wrapping_add(1)) as u32) << 0),
-            3 => ((self.peek(ptr) as u32)                 << 16) |
-                 ((self.peek(ptr.wrapping_add(1)) as u32) << 8) |
-                 ((self.peek(ptr.wrapping_add(2)) as u32) << 0),
-            _ => panic!("print_trace_line - Unexpected num_bytes {:?} {:?}", num_bytes, i),
-        };
-        eprintln!("{:4}: {:x} {:<8x} {:?} A:{:2x} X:{:2x} Y:{:2x} P:{:2x} SP:{:2x} I:{:?}",
-                  self.counter, self.pc, bytes, i.op, self.acc, self.x, self.y, self.status_register_byte(true), self.sp, i);
+    fn print_trace_line(&self, _num_bytes:u16, _i:&Instruction) {
+        // let ptr = self.pc;
+        // let bytes:u32 = match num_bytes {
+        //     1 => self.peek(ptr) as u32,
+        //     2 => ((self.peek(ptr) as u32)                 << 8) |
+        //          ((self.peek(ptr.wrapping_add(1)) as u32) << 0),
+        //     3 => ((self.peek(ptr) as u32)                 << 16) |
+        //          ((self.peek(ptr.wrapping_add(1)) as u32) << 8) |
+        //          ((self.peek(ptr.wrapping_add(2)) as u32) << 0),
+        //     _ => panic!("print_trace_line - Unexpected num_bytes {:?} {:?}", num_bytes, i),
+        // };
+        // eprintln!("{:4}: {:x} {:<8x} {:?} A:{:2x} X:{:2x} Y:{:2x} P:{:2x} SP:{:2x} I:{:?}",
+        //           self.counter, self.pc, bytes, i.op, self.acc, self.x, self.y, self.status_register_byte(true), self.sp, i);
     }
 
     fn decode_instruction(&self) -> (Instruction, u16) {
         let ptr = self.pc;
         let opcode = self.peek(ptr) as usize;
         //eprintln!("DEBUG - Opcode - {:x}", opcode);
-        let (op, mode, clocks, page_clocks) = OPCODE_TABLE[opcode];
+        let (op, mode, clocks, _page_clocks) = OPCODE_TABLE[opcode];
         let generate_read = self.should_generate_read(op);
         let (mode_args, write_target, num_arg_bytes, oops_cycle) = self.decode_addressing_mode(mode, ptr.wrapping_add(1), generate_read);
         // TODO: Use page_clocks
@@ -826,7 +777,7 @@ impl C6502 {
     }
 
     fn execute_asl(&mut self, v: u8) -> u8 {
-        let (x, o) = v.overflowing_mul(2);
+        let x = v.wrapping_mul(2);
         self.carry = get_bit(v, 7) > 0;
         return x;
     }
@@ -1145,7 +1096,6 @@ impl C6502 {
     fn execute_rla(&mut self, v:u8) -> u8 {
         let x = self.execute_rol(v);
         self.execute_and(x);
-        eprintln!("DEBUG - RLA - {} {} {}", v, x, self.acc);
         return x;
     }
     fn execute_rra(&mut self, v:u8) -> u8 {
@@ -1266,162 +1216,4 @@ impl C6502 {
 
 fn is_negative(v: u8) -> bool {
     return v >= 128;
-}
-
-mod tests {
-    use super::*;
-
-    use crate::mapper::Ram;
-    use crate::mapper::AccessType;
-
-    use std::ops::DerefMut;
-
-    fn create_test_cpu(program:&Vec<u8>) -> C6502 {
-        let mut memory = Ram::new(65536);
-        for (byte, idx) in program.iter().zip(0..65536) {
-            memory.poke(ADDRESS_TEST_PROGRAM + idx as u16, *byte)
-        }
-        let logged_memory:LoggedAddressSpace = LoggedAddressSpace::new(Box::new(memory));
-        let mapper = Box::new(logged_memory);
-        let mut cpu = C6502::new(mapper);
-        cpu.pc = ADDRESS_TEST_PROGRAM;
-        cpu.is_tracing = false;
-        return cpu;
-    }
-
-    #[test]
-    fn test_bit() {
-        let program:Vec<u8> = vec!(0xa9, 0xff, // LDA #255
-                                   0x85, 0x01, // STA $01
-                                   0x24, 0x01, // BIT $01
-        );
-        let mut c = create_test_cpu(&program);
-        c.run_instructions(3);
-        assert!(c.overflow);
-    }
-    #[test]
-    fn test_subroutine() {
-        let program:Vec<u8> =
-            vec!(0x20, 0x03, 0xC0, // JSR $C003
-                 0x60,             // RTS
-            );
-        let mut c = create_test_cpu(&program);
-        c.is_tracing = true;
-        c.run_instructions(2);
-        assert_eq!(c.pc, 0xC003);
-    }
-    #[test]
-    fn test_flags() {
-        let program:Vec<u8> =
-            vec!(
-                0xA9, 0xFF, // LDA #$FF
-                0x85, 0x01, // STA $01 = 00
-                0x24, 0x01, // BIT $01 = FF
-                0xa9, 0x00, // LDA #$00
-                0x38,       // SEC
-                0x78,       // SEI
-                0xf8,       // SED
-                0x08,       // PHP
-                0x68,       // PLA
-            );
-        let mut c = create_test_cpu(&program);
-        c.run_instructions(9);
-        assert_eq!(c.acc, 111);
-    }
-    #[test]
-    fn test_adc() {
-        let program:Vec<u8> =
-            vec!(
-                0xA9, 0x00, // LDA #$00
-                0x69, 0x69, // ADC #$69
-            );
-        let mut c = create_test_cpu(&program);
-        c.set_status_register_from_byte(0x6E);
-        c.run_instructions(2);
-        assert_eq!(c.status_register_byte(true), 0x2c);
-    }
-    #[test]
-    fn test_bcc() {
-        let program:Vec<u8> =
-            vec!(0x90, 0x09,); // BCC #$09
-        let mut c = create_test_cpu(&program);
-        c.set_status_register_from_byte(0xf9);
-        assert_eq!(c.carry, true);
-        let pc = c.pc;
-        c.run_instructions(1);
-        assert_eq!(c.pc - pc, 2); // Branch not taken
-    }
-    #[test]
-    fn test_cmp() {
-        let program:Vec<u8> =
-            vec!(0xc9, 0x4d); // CMP #$4D
-        let mut c = create_test_cpu(&program);
-        c.acc = 0x4D;
-        c.set_status_register_from_byte(0x27);
-        c.clock();
-        assert_eq!(c.status_register_byte(true), 0x27);
-    }
-    #[test]
-    fn test_jsr() {
-        let program:Vec<u8> =
-            vec!(0x20, 0x03, 0xc0, // JSR $c003
-                 0x68,             // PLA
-            );
-        let mut c = create_test_cpu(&program);
-        c.run_instructions(2);
-        assert_eq!(c.acc, 0x02);
-    }
-    #[test]
-    fn test_lsr() {
-        let program:Vec<u8> =
-            vec!(0xa9, 0x01, // LDA #$01
-                 0x4a,);     // LSR
-        let mut c = create_test_cpu(&program);
-        c.set_status_register_from_byte(0x65);
-        c.run_instructions(2);
-        assert_eq!(c.status_register_byte(true), 0x67);
-    }
-    #[test]
-    fn test_asl() {
-        let program:Vec<u8> =
-            vec!(0xa9, 0x80, // LDA #$80
-                 0xa);       // ASL
-        let mut c = create_test_cpu(&program);
-        c.is_tracing = true;
-        c.set_status_register_from_byte(0xe5);
-        c.run_instructions(2);
-        assert_eq!(c.acc, 0);
-        assert_eq!(c.status_register_byte(true), 0x67);
-    }
-    #[test]
-    fn test_ror() {
-        let program:Vec<u8> =
-            vec!(0xa9, 0x55, // LDA #$55
-                 0x6a);      // ROR
-        let mut c = create_test_cpu(&program);
-        c.set_status_register_from_byte(0x24);
-        c.run_instructions(2);
-        assert_eq!(c.acc, 0x2A);
-        assert_eq!(c.status_register_byte(true), 0x25);
-    }
-    #[test]
-    fn test_sta_no_read() {
-        let program:Vec<u8> =
-            vec!(0xa9, 0x05,      // LDA #$05
-                 0x8d,0x00,0x00, // STA $0000
-            );
-        let mut c = create_test_cpu(&program);
-        let mapper:&mut LoggedAddressSpace =
-            unsafe { &mut *(c.mapper.deref_mut() as *mut AddressSpace as *mut LoggedAddressSpace) };
-        c.run_instructions(2);
-        assert_eq!(mapper.copy_log(), [
-            (0, AccessType::Read, ADDRESS_TEST_PROGRAM+0, 0xa9),
-            (1, AccessType::Read, ADDRESS_TEST_PROGRAM+1, 0x05),
-            (2, AccessType::Read, ADDRESS_TEST_PROGRAM+2, 0x8d),
-            (3, AccessType::Read, ADDRESS_TEST_PROGRAM+3, 0x00),
-            (4, AccessType::Read, ADDRESS_TEST_PROGRAM+4, 0x00),
-            (5, AccessType::Write, 0, 5)]
-        );
-
-    }
 }
