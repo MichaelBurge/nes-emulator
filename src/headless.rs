@@ -7,9 +7,8 @@ mod nes;
 mod joystick;
 mod serialization;
 
+use core::ptr::null_mut;
 use std::io::Read;
-use std::io::stdout;
-use std::io::stdin;
 use std::io::Write;
 use std::fs::File;
 use std::fmt::Debug;
@@ -36,8 +35,8 @@ fn main() {
 }
 
 struct Headless {
-    joystick1: Box<Joystick>,
-    joystick2: Box<Joystick>,
+    joystick1: *mut Joystick,
+    joystick2: *mut Joystick,
     nes: Option<Box<Nes>>,
     in_fh: Box<Read>,
     out_fh: Box<Write>,
@@ -47,12 +46,10 @@ struct Headless {
 
 impl Headless {
     pub fn new(in_fh: Box<Read>, out_fh: Box<Write>) -> Headless {
-        let joystick1 = Box::new(Joystick::new_software());
-        let joystick2 = Box::new(Joystick::new_software());
         let mut nes = None;
         Headless {
-            joystick1: joystick1,
-            joystick2: joystick2,
+            joystick1: null_mut(),
+            joystick2: null_mut(),
             nes: nes,
             in_fh: in_fh,
             out_fh: out_fh,
@@ -87,11 +84,13 @@ impl Headless {
     fn command_load_rom(&mut self) {
         let mut record_tas = self.read_byte();
         let filename = self.read_length_string();
-        let j1 = &mut *self.joystick1 as *mut Joystick;
-        let j2 = &mut *self.joystick2 as *mut Joystick;
+        let mut joystick1 = Box::new(Joystick::new_software());
+        let mut joystick2 = Box::new(Joystick::new_software());
+        self.joystick1 = &mut *joystick1;
+        self.joystick2 = &mut *joystick2;
         match read_ines(filename.clone()) {
             Ok(ines) => {
-                let nes = load_ines(ines, Box::new(j1), Box::new(j2));
+                let nes = load_ines(ines, joystick1, joystick2);
                 self.nes = Some(Box::new(nes));
             }
             x@Err{..} => panic!("Error loading rom file {:?} - {:?}", filename, x),
@@ -110,9 +109,9 @@ impl Headless {
         self.out_fh.write(&bytes);
     }
     fn command_set_inputs(&mut self) {
-        let button_mask = self.read_byte();
         self.read_byte();
-        self.joystick1.set_buttons(button_mask);
+        let button_mask = self.read_byte();
+        unsafe { (*self.joystick1).set_buttons(button_mask) };
     }
     fn command_save_state(&mut self) {
         let filename = self.read_length_string();

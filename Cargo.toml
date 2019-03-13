@@ -16,6 +16,13 @@ path = "src/main.rs"
 name = "bench"
 path = "src/bench.rs"
 
+[[bench]]
+name = "emulator"
+harness = false
+
+[dev-dependencies]
+criterion = "0.2"
+
 [dependencies]
 sdl2 = "0.32"
 

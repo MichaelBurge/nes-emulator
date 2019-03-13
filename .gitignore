@@ -1,3 +1,6 @@
 main
 target
 roms
+*.rlib
+*.log
+*.state

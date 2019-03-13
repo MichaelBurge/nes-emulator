@@ -525,7 +525,6 @@ impl Instruction {
 }
 
 impl Clocked for C6502 {
-    #[allow(mutable_transmutes)]
     fn clock(&mut self) {
         self.counter += 1;
         if self.clocks_to_pause > 0 {
@@ -538,8 +537,10 @@ impl Clocked for C6502 {
         { self.print_trace_line(num_bytes, &i); }
         self.pc = self.pc.wrapping_add(num_bytes);
         self.execute_instruction(i);
-        let debugger:&mut C6502Debugger = unsafe { transmute(&self.debugger) };
-        debugger.on_step(&self, num_bytes, &i);
+        {
+            let debugger:*mut C6502Debugger = &mut self.debugger;
+            unsafe {(*debugger).on_step(&self, num_bytes, &i)};
+        }
         self.clocks_to_pause += (i.num_clocks as u16)-1;
         // TODO: Implement "oops cycle" for indexing modes that cross a page boundary.
     }

@@ -14,7 +14,7 @@ pub struct Joystick {
     sdl_controller: Option<sdl2::controller::GameController>,
     sdl_id: u32,
     is_software: bool,
-    button_mask: u8,
+    pub button_mask: u8,
     strobe_active: bool,
 }
 
@@ -120,7 +120,6 @@ impl AddressSpace for Joystick {
         );
          */
         let byte = self.button_mask & 1;
-        // eprintln!("DEBUG - CONTROLLER {} {}", self.button_mask, byte);
         mut_self.button_mask >>= 1;
         return byte;
     }

@@ -1,3 +1,5 @@
+#[allow(unused_must_use)] // TODO
+
 use std::fs::File;
 use std::io::Read;
 use std::io::Write;
