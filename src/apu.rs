@@ -1,5 +1,7 @@
 #![allow(unused_imports)]
 #![allow(non_camel_case_types)]
+#![allow(dead_code)] // TODO
+#![allow(unused_variables)]
 
 use crate::common::{Clocked, ternary, get_bit};
 use crate::mapper::AddressSpace;
@@ -103,7 +105,11 @@ impl FrameCounter {
 impl Clocked for FrameCounter {
     fn clock(&mut self) {
         self.step += 1;
-        self.step %= ternary(self.mode, 18641, 14915);
+        let cap = ternary(self.mode, 18641, 14915);
+        // self.step %= cap;
+        if self.step >= cap {
+            self.step -= cap;
+        }
     }
 }
 

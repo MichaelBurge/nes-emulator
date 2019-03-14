@@ -1,10 +1,12 @@
 #![allow(unused_imports)]
+#![allow(dead_code)]
 
 use std::cell::UnsafeCell;
 use std::borrow::BorrowMut;
 use std::io::Read;
 use std::io::Write;
 
+use crate::common::ternary;
 use crate::serialization::Savable;
 
 pub trait AddressSpace : Savable {
@@ -122,7 +124,13 @@ impl MirroredAddressSpace {
             panic!("map_address: Out of mapped range ({:?} not in range [{:?}, {:?}]", ptr, self.extended_begin, self.extended_end);
         }
         let width = self.base_end - self.base_begin + 1;
-        return (ptr - self.extended_begin) % width + self.base_begin;
+        let relptr = ptr - self.extended_begin;
+        if relptr >= width {
+            return (ptr - self.extended_begin) % width + self.base_begin;
+        } else {
+            return relptr + self.base_begin;
+        }
+
     }
 }
 
@@ -161,8 +169,8 @@ impl NullAddressSpace {
 }
 
 impl Savable for NullAddressSpace {
-    fn save(&self, fh: &mut Write) {}
-    fn load(&mut self, fh: &mut Read) { }
+    fn save(&self, _fh: &mut Write) {}
+    fn load(&mut self, _fh: &mut Read) { }
 }
 
 impl AddressSpace for NullAddressSpace {
@@ -177,6 +185,16 @@ impl AddressSpace for NullAddressSpace {
 
 type UsesOriginalAddress = bool;
 struct Mapping(u16, u16, Box<dyn AddressSpace>, UsesOriginalAddress);
+impl Mapping {
+    fn map_ptr(&self, ptr:u16) -> Option<u16> {
+        let Mapping(range_begin, range_end, _, use_original_address) = *self;
+        if ptr >= range_begin && ptr <= range_end {
+            let space_ptr = ternary(use_original_address, ptr, ptr - range_begin);
+            return Some(space_ptr);
+        }
+        return None;
+    }
+}
 
 impl Savable for Mapping {
     fn save(&self, fh: &mut Write) {
@@ -220,14 +238,8 @@ impl Mapper {
     }
 
     fn lookup_address_space(&self, ptr: u16) -> (usize, u16) {
-        let mut last_range_end = 0;
         for space_idx in 0..self.mappings.len() {
-            let Mapping(range_begin, range_end, _, use_original_address) = self.mappings[space_idx];
-            last_range_end = range_end;
-            if ptr >= range_begin && ptr <= range_end {
-                let space_ptr =
-                    if use_original_address { ptr }
-                else { (ptr - range_begin) };
+            if let Some(space_ptr) = self.mappings[space_idx].map_ptr(ptr) {
                 return (space_idx, space_ptr);
             }
         }
@@ -257,10 +269,10 @@ impl Mapper {
         let base_begin =
             if use_original { begin } else { 0 };
         let base_end = base_begin + (end - begin);
-            let space:MirroredAddressSpace = MirroredAddressSpace {
-                base: space,
-                base_begin: base_begin, base_end,
-                extended_begin, extended_end,
+        let space:MirroredAddressSpace = MirroredAddressSpace {
+            base: space,
+            base_begin: base_begin, base_end,
+            extended_begin, extended_end,
         };
         self.map_address_space(extended_begin, extended_end, Box::new(space), true);
     }
@@ -293,8 +305,8 @@ pub struct LoggedAddressSpace {
 }
 
 impl Savable for LoggedAddressSpace {
-    fn save(&self, fh: &mut Write) { panic!("save() unimplemented"); }
-    fn load(&mut self, fh: &mut Read) { panic!("load() unimplemented"); }
+    fn save(&self, _fh: &mut Write) { panic!("save() unimplemented"); }
+    fn load(&mut self, _fh: &mut Read) { panic!("load() unimplemented"); }
 }
 
 impl LoggedAddressSpace {

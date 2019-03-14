@@ -1,4 +1,6 @@
 #![allow(unused_imports)]
+#![allow(dead_code)]
+#![allow(unused_variables)]
 
 use crate::common::*;
 use crate::mapper::{AddressSpace, Mapper};
@@ -994,15 +996,6 @@ impl Ppu {
         };
         //eprintln!("DEBUG - ATTRIBUTE ENTRY - {:x} {}", entry, palette_id);
         return palette_id;
-    }
-
-    fn debug_print_attribute_table(&self, nametable:u8) {
-        // for idx_x in 0..=32 {
-        //     for idx_y in 0..=30 {
-        //         let palette_id = self.lookup_attribute_table(nametable, idx_x, idx_y);
-        //         //eprintln!("DEBUG - PALETTE ID - {} {} {}", idx_x, idx_y, palette_id);
-        //     }
-        // }
     }
 
     pub fn write_control(&mut self, v:u8) {

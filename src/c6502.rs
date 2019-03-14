@@ -1,5 +1,7 @@
 #![allow(unused_imports)]
 #![allow(non_upper_case_globals)]
+#![allow(dead_code)]
+#![allow(unused_variables)]
 
 use crate::common::{run_clocks, Clocked, get_bit};
 use crate::mapper::AddressSpace;

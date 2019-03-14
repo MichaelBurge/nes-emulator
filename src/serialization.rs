@@ -1,4 +1,5 @@
-#[allow(unused_must_use)] // TODO
+#![allow(unused_must_use)] // TODO
+#![allow(dead_code)]
 
 use std::fs::File;
 use std::io::Read;

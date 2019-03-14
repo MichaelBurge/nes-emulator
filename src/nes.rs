@@ -1,5 +1,6 @@
 #![allow(unused_imports)]
 #![allow(non_camel_case_types)]
+#![allow(dead_code)]
 
 use crate::common::*;
 use crate::mapper::*;
@@ -135,22 +136,23 @@ impl Nes {
     pub fn break_debugger(&mut self) {
         self.cpu.break_debugger();
     }
-    fn map_nes_cpu(&mut self, joystick1: Box<AddressSpace>, joystick2: Box<AddressSpace>, cartridge: Box<AddressSpace>) {
+    fn map_nes_cpu(&mut self, joystick1: Box<AddressSpace>, _joystick2: Box<AddressSpace>, cartridge: Box<AddressSpace>) {
         let mut mapper:Mapper = Mapper::new();
         let cpu_ram:Ram = Ram::new(0x800);
         let cpu_ppu:CpuPpuInterconnect = CpuPpuInterconnect::new(self.ppu.deref_mut(), self.cpu.deref_mut());
         let apu = self.apu.deref_mut() as *mut Apu;
         // https://wiki.nesdev.com/w/index.php/CPU_memory_map
+        // NOTE: These are checked in-order, so put frequently-used components first
+        mapper.map_address_space(0x4020, 0xFFFF, cartridge, true);
         mapper.map_mirrored(0x0000, 0x07ff, 0x0000, 0x1fff, Box::new(cpu_ram), false);
         mapper.map_mirrored(0x2000, 0x2007, 0x2000, 0x3fff, Box::new(cpu_ppu), true);
         mapper.map_address_space(0x4000, 0x4013, Box::new(apu), true);;
-        mapper.map_address_space(0x4014, 0x4014, Box::new(cpu_ppu), true);
         mapper.map_address_space(0x4015, 0x4015, Box::new(apu), true);
-        mapper.map_address_space(0x4016, 0x4016, joystick1, false);
         mapper.map_address_space(0x4017, 0x4017, Box::new(apu), true); // TODO - 0x4017 is also mapped to joystick2
-
+        mapper.map_address_space(0x4016, 0x4016, joystick1, false);
+        mapper.map_address_space(0x4014, 0x4014, Box::new(cpu_ppu), true);
         mapper.map_null(0x4018, 0x401F); // APU test mode
-        mapper.map_address_space(0x4020, 0xFFFF, cartridge, true);
+
         self.cpu.mapper = Box::new(mapper);
         self.cpu.initialize();
     }
