@@ -36,6 +36,7 @@ use core::ptr::null_mut;
 use crate::joystick::Joystick;
 use crate::mapper::AddressSpace;
 use crate::nes::Nes;
+use crate::nes::Tas;
 use crate::nes::{load_ines, read_ines};
 use crate::ppu::*;
 use crate::apu::Apu;
@@ -55,6 +56,7 @@ const APU_FREQUENCY:i32 = 240;
 const AUDIO_FREQUENCY:usize = 44100;
 const SAMPLES_PER_FRAME:usize = 2048;
 const SCALE:usize = 4;
+const RECORDING:bool = true;
 
 struct GlobalState {
     sdl_context: *mut sdl2::Sdl,
@@ -70,6 +72,7 @@ struct GlobalState {
     texture: *mut Texture<'static>,
     sdl_controller1: *mut sdl2::controller::GameController,
     sdl_controller2: *mut sdl2::controller::GameController,
+    tas: *mut Tas,
 }
 
 static mut GLOBAL_STATE:Option<GlobalState> = None;
@@ -103,7 +106,10 @@ fn main() {
         //samples: Some(8820),
         samples: Some(SAMPLES_PER_FRAME as u16),
     };
-
+    let mut tas = Box::new(Tas::new());
+    if let Ok(mut fh) = File::open("save.tas") {
+        tas.load(&mut fh);
+    }
     // let audio_device = audio_subsystem.open_playback(None, &desired_spec, |spec| {
     //     ApuSampler {
     //         apu: NonNull::from(&mut nes.apu),
@@ -136,12 +142,14 @@ fn main() {
         texture: &mut *texture,
         sdl_controller1: null_mut(),
         sdl_controller2: null_mut(),
+        tas: &mut *tas,
     });
     }
 
     if cfg!(target_os = "emscripten") {
         // void emscripten_set_main_loop(em_callback_func func, int fps, int simulate_infinite_loop);
         unsafe { emscripten_set_main_loop(main_loop, 60, 1) };
+        loop { }
     } else {
         let mut every_second = Instant::now();
         let mut num_frames = 0;
@@ -181,6 +189,7 @@ extern fn main_loop() {
     let mut canvas = unsafe { &mut *st.canvas };
     let mut texture = unsafe { &mut *st.texture };
     let mut controller_subsystem = unsafe { &mut *st.controller_subsystem };
+    let mut tas = unsafe { &mut *st.tas };
 
     // eprintln!("DEBUG - POINTERS - ({:p}, {:?}) ({:p}, {:?}) {:p} {:p} {:p} {:p} {:p}",
     //           joystick1,
@@ -206,10 +215,14 @@ extern fn main_loop() {
             Event::KeyDown { keycode: Some(Keycode::F5), .. } => {
                 let mut file = File::create("save.state").unwrap();
                 nes.save(&mut file);
+                let mut tas_file = File::create("save.tas").unwrap();
+                tas.save(&mut tas_file);
             },
             Event::KeyDown { keycode: Some(Keycode::F6), .. } => {
                 let mut file = File::open("save.state").unwrap();
                 nes.load(&mut file);
+                let mut tas_file = File::open("save.tas").unwrap();
+                tas.load(&mut tas_file);
             },
             Event::ControllerDeviceAdded { which: id, .. } => {
                 eprintln!("DEBUG - CONTROLLER ADDED - {}", id);
@@ -224,7 +237,14 @@ extern fn main_loop() {
         }
     }
 
-    let j1_bmask = get_button_mask(st.sdl_controller1);
+    let frame = nes.current_frame() as usize;
+    let j1_bmask = tas.get_inputs(frame).unwrap_or_else(|| {
+        let buttons = get_button_mask(st.sdl_controller1);
+        if RECORDING {
+            tas.record_frame(frame, buttons);
+        }
+        buttons
+    });
     let j2_bmask = get_button_mask(st.sdl_controller2);
     joystick1.set_buttons(j1_bmask);
     joystick2.set_buttons(j2_bmask);

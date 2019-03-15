@@ -137,6 +137,9 @@ impl Nes {
     pub fn break_debugger(&mut self) {
         self.cpu.break_debugger();
     }
+    pub fn current_frame(&self) -> u32 {
+        return self.ppu.current_frame();
+    }
     fn map_nes_cpu(&mut self, joystick1: Box<AddressSpace>, _joystick2: Box<AddressSpace>, cartridge: Box<AddressSpace>) {
         let mut mapper:Mapper = Mapper::new();
         let cpu_ram:Ram = Ram::new(0x800);
@@ -205,5 +208,35 @@ impl Savable for Nes {
         let mut check = 0u32;
         check.load(fh);
         assert_eq!(check, 0xf00f);
+    }
+}
+
+pub struct Tas {
+    inputs: Vec<u8>,
+}
+
+impl Tas {
+    pub fn new() -> Tas {
+        Tas { inputs: Vec::new() }
+    }
+    pub fn get_inputs(&self, frame: usize) -> Option<u8> {
+        if frame >= self.inputs.len() {
+            None
+        } else {
+            Some(self.inputs[frame])
+        }
+    }
+    pub fn record_frame(&mut self, frame: usize, buttons: u8) {
+        self.inputs.truncate(frame);
+        self.inputs.push(buttons);
+    }
+}
+
+impl Savable for Tas {
+    fn save(&self, fh: &mut Write) {
+        self.inputs.save(fh);
+    }
+    fn load(&mut self, fh: &mut Read) {
+        self.inputs.load(fh);
     }
 }

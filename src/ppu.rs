@@ -721,6 +721,10 @@ impl Ppu {
         }
     }
 
+    pub fn current_frame(&self) -> u32 {
+        return self.frame;
+    }
+
     pub fn render(&self) -> [u8; RENDER_SIZE] {
         let mut ret = [0;RENDER_SIZE];
         for i in 0..UNRENDER_SIZE {
