@@ -1,3 +1,6 @@
+#![allow(dead_code)]
+#![allow(unused_mut)]
+
 mod common;
 mod c6502;
 mod ppu;
@@ -10,6 +13,7 @@ mod serialization;
 extern crate sdl2;
 
 use sdl2::audio::{AudioCallback,AudioSpecDesired,AudioQueue};
+use sdl2::controller::GameController;
 use sdl2::pixels::PixelFormatEnum;
 use sdl2::pixels::Color;
 use sdl2::event::Event;
@@ -26,6 +30,8 @@ use std::ptr::NonNull;
 use std::time::{Duration,Instant};
 use std::fs::File;
 use std::os::raw::c_int;
+
+use core::ptr::null_mut;
 
 use crate::joystick::Joystick;
 use crate::mapper::AddressSpace;
@@ -62,6 +68,8 @@ struct GlobalState {
     nes: *mut Nes,
     audio_device: *mut AudioQueue<f32>,
     texture: *mut Texture<'static>,
+    sdl_controller1: *mut sdl2::controller::GameController,
+    sdl_controller2: *mut sdl2::controller::GameController,
 }
 
 static mut GLOBAL_STATE:Option<GlobalState> = None;
@@ -71,8 +79,8 @@ fn main() {
     let mut video_subsystem = Box::new(sdl_context.video().unwrap());
     let mut controller_subsystem = Box::new(sdl_context.game_controller().unwrap());
     let mut audio_subsystem = Box::new(sdl_context.audio().unwrap());
-    let mut joystick1 = Box::new(Joystick::new(&controller_subsystem, 0));
-    let mut joystick2 = Box::new(Joystick::new(&controller_subsystem, 1));
+    let mut joystick1 = Box::new(Joystick::new());
+    let mut joystick2 = Box::new(Joystick::new());
     let joystick1_ptr = (&mut *joystick1) as *mut Joystick;
     let joystick2_ptr = (&mut *joystick2) as *mut Joystick;
     let window = video_subsystem.window("NES emulator", (RENDER_WIDTH*SCALE) as u32, (RENDER_HEIGHT*SCALE) as u32)
@@ -89,7 +97,6 @@ fn main() {
         RENDER_HEIGHT as u32
     ).unwrap());
     let mut nes = Box::new(create_nes(joystick1, joystick2));
-
     let desired_spec = AudioSpecDesired {
         freq: Some(AUDIO_FREQUENCY as i32),
         channels: Some(1),
@@ -127,6 +134,8 @@ fn main() {
         nes: &mut *nes,
         audio_device: &mut *audio_device,
         texture: &mut *texture,
+        sdl_controller1: null_mut(),
+        sdl_controller2: null_mut(),
     });
     }
 
@@ -158,19 +167,32 @@ fn main() {
             //SDL_Delay(time_to_next_frame());
         }
     }
+
 }
 
 extern fn main_loop() {
-    let st = unsafe { GLOBAL_STATE.as_ref().unwrap() };
-    let mut sdl_context = unsafe { &mut *st.sdl_context };
-    let mut joystick1 = unsafe { &mut *st.joystick1 };
-    let mut joystick2 = unsafe { &mut *st.joystick2 };
+    let st = unsafe { GLOBAL_STATE.as_mut().unwrap() };
+    // let mut sdl_context = unsafe { &mut *st.sdl_context };
+    let joystick1:&mut Joystick = unsafe { &mut *st.joystick1 };
+    let joystick2:&mut Joystick = unsafe { &mut *st.joystick2 };
     let mut nes = unsafe { &mut *st.nes };
     let mut event_pump = unsafe { &mut *st.event_pump };
     let mut audio_device = unsafe { &mut *st.audio_device };
     let mut canvas = unsafe { &mut *st.canvas };
     let mut texture = unsafe { &mut *st.texture };
     let mut controller_subsystem = unsafe { &mut *st.controller_subsystem };
+
+    // eprintln!("DEBUG - POINTERS - ({:p}, {:?}) ({:p}, {:?}) {:p} {:p} {:p} {:p} {:p}",
+    //           joystick1,
+    //           joystick1,
+    //           joystick2,
+    //           joystick2,
+    //           nes,
+    //           event_pump,
+    //           audio_device,
+    //           canvas,
+    //           texture,
+    //           );
 
     for event in event_pump.poll_iter() {
         match event {
@@ -189,12 +211,23 @@ extern fn main_loop() {
                 let mut file = File::open("save.state").unwrap();
                 nes.load(&mut file);
             },
+            Event::ControllerDeviceAdded { which: id, .. } => {
+                eprintln!("DEBUG - CONTROLLER ADDED - {}", id);
+                match id {
+                    0 => st.sdl_controller1 = Box::leak(Box::new(controller_subsystem.open(id).unwrap())),
+                    1 => st.sdl_controller2 = Box::leak(Box::new(controller_subsystem.open(id).unwrap())),
+                    _ => eprintln!("DEBUG - UNEXPECTED CONTROLLER ID {}", id),
+                }
+
+            }
             _ => {}
         }
-        joystick1.process_event(&controller_subsystem, &event);
-        joystick2.process_event(&controller_subsystem, &event);
     }
 
+    let j1_bmask = get_button_mask(st.sdl_controller1);
+    let j2_bmask = get_button_mask(st.sdl_controller2);
+    joystick1.set_buttons(j1_bmask);
+    joystick2.set_buttons(j2_bmask);
     nes.run_frame();
     present_frame(&mut canvas, &mut texture, &nes.ppu.render());
     enqueue_frame_audio(&audio_device, &mut nes.apu.samples);
@@ -221,7 +254,6 @@ impl ApuSampler {
     fn resample(last_sample:&mut f32, samples: &[f32], resamples:&mut [f32]) {
         let num_samples = samples.len();
         let num_resamples = resamples.len();
-        let new_time = Instant::now();
 
         let ratio = num_samples as f32 / num_resamples as f32;
         let mut t = 0.0f32;
@@ -340,4 +372,44 @@ impl AudioCallback for SquareWave {
             self.phase = (self.phase + self.phase_inc) % 1.0;
         }
     }
+}
+
+fn get_button_bit(controller: *mut GameController, button_id:u8) -> u8 {
+    // Button order: A,B, Select,Start,Up,Down,Left,Right
+    let button = match button_id {
+        0 => sdl2::controller::Button::A,
+        1 => sdl2::controller::Button::B,
+        2 => sdl2::controller::Button::Back,
+        3 => sdl2::controller::Button::Start,
+        4 => sdl2::controller::Button::DPadUp,
+        5 => sdl2::controller::Button::DPadDown,
+        6 => sdl2::controller::Button::DPadLeft,
+        7 => sdl2::controller::Button::DPadRight,
+        _ => panic!("Unknown button"),
+    };
+    unsafe {
+        match controller.as_ref() {
+            None => {
+                // eprintln!("DEBUG - ZERO");
+                0
+            },
+            Some(controller) => {
+                //eprintln!("DEBUG - NOT ZERO");
+                controller.button(button) as u8
+            },
+        }
+    }
+}
+
+fn get_button_mask(controller: *mut GameController) -> u8 {
+    let mut button_mask = 0;
+    button_mask |= get_button_bit(controller, 0) << 0;
+    button_mask |= get_button_bit(controller, 1) << 1;
+    button_mask |= get_button_bit(controller, 2) << 2;
+    button_mask |= get_button_bit(controller, 3) << 3;
+    button_mask |= get_button_bit(controller, 4) << 4;
+    button_mask |= get_button_bit(controller, 5) << 5;
+    button_mask |= get_button_bit(controller, 6) << 6;
+    button_mask |= get_button_bit(controller, 7) << 7;
+    return button_mask;
 }

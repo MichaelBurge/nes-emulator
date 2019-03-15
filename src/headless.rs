@@ -1,3 +1,5 @@
+#![allow(unused_must_use)]
+
 mod common;
 mod c6502;
 mod ppu;
@@ -84,8 +86,8 @@ impl Headless {
     fn command_load_rom(&mut self) {
         let mut record_tas = self.read_byte();
         let filename = self.read_length_string();
-        let mut joystick1 = Box::new(Joystick::new_software());
-        let mut joystick2 = Box::new(Joystick::new_software());
+        let mut joystick1 = Box::new(Joystick::new());
+        let mut joystick2 = Box::new(Joystick::new());
         self.joystick1 = &mut *joystick1;
         self.joystick2 = &mut *joystick2;
         match read_ines(filename.clone()) {

@@ -12,8 +12,8 @@ use crate::nes::{read_ines,load_ines};
 
 
 fn main() {
-    let joystick1 = Box::new(Joystick::new_software());
-    let joystick2 = Box::new(Joystick::new_software());
+    let joystick1 = Box::new(Joystick::new());
+    let joystick2 = Box::new(Joystick::new());
     let ines = read_ines("roms/mario.nes".to_string()).unwrap();
     let mut nes = load_ines(ines, joystick1, joystick2);
     for _ in 0..10_000 {

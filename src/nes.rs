@@ -16,6 +16,7 @@ use crate::mapper::{Mapper, Ram};
 use crate::joystick::Joystick;
 use crate::serialization::Savable;
 
+use core::mem::transmute_copy;
 use std::fs::File;
 use std::io::Read;
 use std::io::Write;
@@ -149,6 +150,7 @@ impl Nes {
         mapper.map_address_space(0x4000, 0x4013, Box::new(apu), true);;
         mapper.map_address_space(0x4015, 0x4015, Box::new(apu), true);
         mapper.map_address_space(0x4017, 0x4017, Box::new(apu), true); // TODO - 0x4017 is also mapped to joystick2
+        mapper.map_address_space(0x4017, 0x4017, _joystick2, false); // TODO -- Transfers ownership of joystick2 so it isn't deallocated
         mapper.map_address_space(0x4016, 0x4016, joystick1, false);
         mapper.map_address_space(0x4014, 0x4014, Box::new(cpu_ppu), true);
         mapper.map_null(0x4018, 0x401F); // APU test mode
