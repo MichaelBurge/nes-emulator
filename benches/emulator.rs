@@ -10,8 +10,8 @@ use criterion::Criterion;
 use std::time::Duration;
 
 fn criterion_benchmark(c: &mut Criterion) {
-    let joystick1 = Box::new(Joystick::new_software());
-    let joystick2 = Box::new(Joystick::new_software());
+    let joystick1 = Box::new(Joystick::new());
+    let joystick2 = Box::new(Joystick::new());
     let ines = read_ines("roms/mario.nes".to_string()).unwrap();
     let mut nes = load_ines(ines, joystick1, joystick2);
     c.bench_function(
