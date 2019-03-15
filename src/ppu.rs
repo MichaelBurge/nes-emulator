@@ -42,7 +42,7 @@ pub const UNRENDER_SIZE:usize = RENDER_WIDTH * RENDER_HEIGHT;
 pub const RENDER_SIZE:usize = UNRENDER_SIZE * 3;
 
 pub struct Ppu {
-    pub display: [u8; RENDER_SIZE],
+    pub display: [u8; UNRENDER_SIZE],
     pub oam: [u8; 256],
     pub mapper: Box<dyn AddressSpace>,
     pub is_vblank_nmi: bool,
@@ -85,6 +85,7 @@ pub struct Ppu {
 
 impl Savable for Ppu {
     fn save(&self, fh: &mut Write) {
+        self.display.save(fh);
         self.oam.save(fh);
         self.mapper.save(fh);
         self.is_vblank_nmi.save(fh);
@@ -121,6 +122,7 @@ impl Savable for Ppu {
         self.sprite_indices.save(fh);
     }
     fn load(&mut self, fh: &mut Read) {
+        self.display.load(fh);
         self.oam.load(fh);
         self.mapper.load(fh);
         self.is_vblank_nmi.load(fh);
@@ -678,7 +680,7 @@ impl Ppu {
     pub fn new() -> Ppu {
         let mapper = Mapper::new();
         Ppu {
-            display: [0; RENDER_SIZE],
+            display: [0; UNRENDER_SIZE],
             oam: [0; 256],
             mapper: Box::new(mapper),
             is_vblank_nmi: false,
