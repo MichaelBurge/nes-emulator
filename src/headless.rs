@@ -1,4 +1,5 @@
 #![allow(unused_must_use)]
+#![cfg(unix)]
 
 mod common;
 mod c6502;
