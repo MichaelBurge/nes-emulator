@@ -57,6 +57,9 @@ const AUDIO_FREQUENCY:usize = 44100;
 const SAMPLES_PER_FRAME:usize = 2048;
 const SCALE:usize = 4;
 const RECORDING:bool = true;
+const ROM_BEGIN_SAVESTATE:&'static str= "initial.state";
+const DEFAULT_SAVESTATE:&'static str = "save.state";
+const DEFAULT_RECORDING:&'static str = "save.video";
 
 struct GlobalState {
     sdl_context: *mut sdl2::Sdl,
@@ -100,6 +103,9 @@ fn main() {
         RENDER_HEIGHT as u32
     ).unwrap());
     let mut nes = Box::new(create_nes(joystick1, joystick2));
+    if let Ok(mut fh) = File::create(ROM_BEGIN_SAVESTATE) {
+        nes.save(&mut fh);
+    }
     let desired_spec = AudioSpecDesired {
         freq: Some(AUDIO_FREQUENCY as i32),
         channels: Some(1),
@@ -107,9 +113,6 @@ fn main() {
         samples: Some(SAMPLES_PER_FRAME as u16),
     };
     let mut tas = Box::new(Tas::new());
-    if let Ok(mut fh) = File::open("save.tas") {
-        tas.load(&mut fh);
-    }
     // let audio_device = audio_subsystem.open_playback(None, &desired_spec, |spec| {
     //     ApuSampler {
     //         apu: NonNull::from(&mut nes.apu),
@@ -213,16 +216,22 @@ extern fn main_loop() {
                 nes.break_debugger();
             },
             Event::KeyDown { keycode: Some(Keycode::F5), .. } => {
-                let mut file = File::create("save.state").unwrap();
+                let mut file = File::create(DEFAULT_SAVESTATE).unwrap();
                 nes.save(&mut file);
-                let mut tas_file = File::create("save.tas").unwrap();
+                let mut tas_file = File::create(DEFAULT_RECORDING).unwrap();
                 tas.save(&mut tas_file);
             },
             Event::KeyDown { keycode: Some(Keycode::F6), .. } => {
-                let mut file = File::open("save.state").unwrap();
+                let mut file = File::open(DEFAULT_SAVESTATE).unwrap();
                 nes.load(&mut file);
-                let mut tas_file = File::open("save.tas").unwrap();
+                let mut tas_file = File::open(DEFAULT_RECORDING).unwrap();
                 tas.load(&mut tas_file);
+            },
+            Event::KeyDown { keycode: Some(Keycode::F7), .. } => {
+                let mut tas_fh = File::open(DEFAULT_RECORDING).unwrap();
+                tas.load(&mut tas_fh);
+                let mut ss_fh = File::open(ROM_BEGIN_SAVESTATE).unwrap();
+                nes.load(&mut ss_fh);
             },
             Event::ControllerDeviceAdded { which: id, .. } => {
                 eprintln!("DEBUG - CONTROLLER ADDED - {}", id);
