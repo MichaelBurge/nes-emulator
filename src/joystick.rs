@@ -28,6 +28,25 @@ impl Savable for Joystick {
     }
 }
 
+/*
+use crate::savable::{NewSavable, load, save};
+impl NewSavable for Joystick {
+    fn save(&self, writer: &mut Write) {
+        save(writer, self.buttons_register);
+        save(writer, self.strobe_active);
+    }
+    fn load(reader: &mut Read) -> Joystick {
+        let buttons_register = load(reader);
+        let strobe_active = load(reader);
+        Joystick {
+            buttons: 0,
+            buttons_register,
+            strobe_active
+        }
+    }
+}
+*/
+
 impl Joystick {
     pub fn new() -> Joystick {
         Joystick {

@@ -192,8 +192,6 @@ impl Clocked for Nes {
     }
 }
 
-use crate::serialization::file_position;
-
 impl Savable for Nes {
     fn save(&self, fh: &mut Write) {
         self.cpu.save(fh);
@@ -210,6 +208,30 @@ impl Savable for Nes {
         assert_eq!(check, 0xf00f);
     }
 }
+
+/*
+use crate::savable::{NewSavable, load, save};
+impl NewSavable for Nes {
+    fn save(&self, writer: &mut Write) {
+        save(writer, self.cpu);
+        save(writer, self.apu);
+        save(writer, self.ppu);
+        save(writer, 0xF00Fu32);
+    }
+    fn load(reader: &mut Read) -> Nes {
+        let cpu = load(reader);
+        let apu = load(reader);
+        let ppu = load(reader);
+        let checl: u32 = load(reader);
+        assert_eq!(check, 0xF00F);
+        Nes {
+            cpu: Box::new(cpu),
+            apu: Box::new(apu),
+            ppu: Box::new(ppu),
+        }
+    }
+}
+*/
 
 pub struct Tas {
     inputs: Vec<u8>,
@@ -240,3 +262,18 @@ impl Savable for Tas {
         self.inputs.load(fh);
     }
 }
+
+/*
+use crate::savable::{NewSavable, load, save};
+impl NewSavable for Tas {
+    fn save(&self, writer: &mut Write) {
+        save(writer, self.inputs);
+    }
+    fn load(reader: &mut Read) -> Tas {
+        inputs = load(reader);
+        Tas {
+            inputs
+        }
+    }
+}
+*/

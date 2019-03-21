@@ -6,5 +6,6 @@ pub mod mapper;
 pub mod nes;
 pub mod joystick;
 pub mod serialization;
+pub mod savable;
 
 extern crate sdl2;

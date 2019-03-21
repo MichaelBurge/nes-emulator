@@ -25,6 +25,7 @@ criterion = "0.2"
 
 [dependencies]
 sdl2 = "0.32"
+byteorder = "1"
 
 [profile.release]
 opt-level = 3
