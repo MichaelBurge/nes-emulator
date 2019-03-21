@@ -127,7 +127,7 @@ impl<T: Savable> Savable for [T] {
     }
 }
 
-impl<T: Savable> Savable for Vec<T> {
+impl<T: Savable + Default> Savable for Vec<T> {
     fn save(&self, fh: &mut Write) {
         let len:usize = self.len();
         len.save(fh);
@@ -141,7 +141,7 @@ impl<T: Savable> Savable for Vec<T> {
         self.truncate(0);
         self.reserve(len);
         for i in 0..len {
-            let mut x:T = unsafe { std::mem::uninitialized() };
+            let mut x:T = Default::default();
             x.load(fh);
             self.push(x);
         }
