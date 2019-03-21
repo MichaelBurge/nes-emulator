@@ -517,7 +517,7 @@ impl AddressSpace for CpuPpuInterconnect {
             Some(PPUADDR) => ppu.write_address(value),
             Some(PPUDATA) => ppu.write_data(value),
             Some(OAMDMA) => {
-                let cpu = unsafe { &mut *self.cpu };
+                let cpu = unsafe { &*self.cpu };
                 let ptr_base = (value as u16) << 8;
                 for i in 0..=255 {
                     let addr = ptr_base + i;

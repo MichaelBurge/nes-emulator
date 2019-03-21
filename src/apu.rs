@@ -115,6 +115,7 @@ impl Clocked for FrameCounter {
 
 pub struct Apu {
     pub samples:Vec<f32>,
+    pub is_recording:bool,
     cycle:u64,
     sample_rate:f64,
     sample_timer:f64,
@@ -159,7 +160,7 @@ impl Clocked for Apu {
             self.noise.clock_quarter_frame();
             self.dmc.clock_half_frame();
         }
-        if self.sample_timer >= 1.0 {
+        if self.sample_timer >= 1.0 && self.is_recording {
             let sample = self.sample();
             //let sample = 0.1;
             self.samples.push(sample);
@@ -174,6 +175,7 @@ impl Apu {
     pub fn new() -> Apu {
         Apu {
             cycle: 0,
+            is_recording: true,
             samples: Vec::new(),
             sample_rate: 1024.0 / 30000.0,
             sample_timer: 0.0,

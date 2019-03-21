@@ -93,7 +93,8 @@ impl Headless {
         self.joystick2 = &mut *joystick2;
         match read_ines(filename.clone()) {
             Ok(ines) => {
-                let nes = load_ines(ines, joystick1, joystick2);
+                let mut nes = load_ines(ines, joystick1, joystick2);
+                nes.apu.is_recording = false; // TODO - Expose some way to retrieve recorded sound
                 self.nes = Some(Box::new(nes));
             }
             x@Err{..} => panic!("Error loading rom file {:?} - {:?}", filename, x),
