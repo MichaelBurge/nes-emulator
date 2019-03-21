@@ -1,10 +1,8 @@
 #![allow(dead_code)]
-#![allow(mutable_transmutes)]
 
-use std::mem::transmute;
 use std::io::Read;
 use std::io::Write;
-// use core::cell::UnsafeCell;
+use core::cell::Cell;
 
 use crate::common::get_bit;
 use crate::mapper::AddressSpace;
@@ -13,17 +11,19 @@ use crate::serialization::Savable;
 #[derive(Debug)]
 pub struct Joystick {
     buttons: u8,
-    buttons_register: u8,
+    buttons_register: Cell<u8>,
     strobe_active: bool,
 }
 
 impl Savable for Joystick {
     fn save(&self, fh: &mut Write) {
-        self.buttons_register.save(fh);
+        self.buttons_register.get().save(fh);
         self.strobe_active.save(fh);
     }
     fn load(&mut self, fh: &mut Read) {
-        self.buttons_register.load(fh);
+        let mut buttons_register = 0;
+        buttons_register.load(fh);
+        self.buttons_register.set(buttons_register);
         self.strobe_active.load(fh);
     }
 }
@@ -32,7 +32,7 @@ impl Joystick {
     pub fn new() -> Joystick {
         Joystick {
             buttons: 0,
-            buttons_register: 0,
+            buttons_register: Cell::new(0),
             strobe_active: false,
         }
     }
@@ -40,15 +40,15 @@ impl Joystick {
         self.buttons = button_mask;
     }
     fn get_next_button(&self) -> u8 {
-        let mut_self:&mut Self = unsafe { transmute(self) };
-        let byte = self.buttons_register & 1;
-        mut_self.buttons_register >>= 1;
+        let byte = self.buttons_register.get() & 1;
+        let new_buttons_register = self.buttons_register.get() >> 1;
+        self.buttons_register.set(new_buttons_register);
         return byte;
     }
     fn reset_from_strobe(&self) {
-        let mut_self:&mut Self = unsafe { transmute(self) };
         if self.strobe_active {
-            mut_self.buttons_register = self.buttons;
+            let buttons = self.buttons;
+            self.buttons_register.set(buttons);
         }
     }
 }
