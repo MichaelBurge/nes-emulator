@@ -96,7 +96,7 @@ pub fn read_ines(filename: String) -> Result<Ines, io::Error> {
         has_four_screen_vram: get_bit(header[6], 3) > 0,
         is_playchoice10: false, // TODO
         is_vs_unisystem: false, // TODO
-        mapper: (header[6] >> 4) + (header[7] >> 4) << 4,
+        mapper: (header[6] >> 4) + ((header[7] >> 4) << 4),
         prg_rom: HiddenBytes(prg_rom),
         chr_rom: HiddenBytes(chr_rom),
     };
