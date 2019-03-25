@@ -12,6 +12,8 @@ $ cargo build --release
 $ cargo run --release --bin nes-emulator
 ```
 
+The emulator loads a ROM in iNES format located at the hardcoded path `roms/mario.nes`.
+
 ## Inputs
 
 The emulator has been tested with an Xbox 360 controller, but should work with any controller the SDL library recognizes.
