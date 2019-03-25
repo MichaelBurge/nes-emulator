@@ -138,7 +138,9 @@ impl Headless {
     }
     fn command_peek(&mut self) {
         let ptr = self.read_value::<u16>();
-        self.nes.as_ref().unwrap().cpu.peek(ptr);
+        let result = self.nes.as_ref().unwrap().cpu.peek(ptr);
+        let mut out_fh = &mut self.out_fh;
+        result.save(&mut out_fh);
     }
     fn command_poke(&mut self) {
         let ptr = self.read_value::<u16>();
