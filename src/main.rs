@@ -30,6 +30,7 @@ use std::ptr::NonNull;
 use std::time::{Duration,Instant};
 use std::fs::File;
 use std::os::raw::c_int;
+use std::io::ErrorKind;
 
 use core::ptr::null_mut;
 
@@ -46,7 +47,7 @@ extern {
     fn emscripten_set_main_loop(
         m: extern fn(),
         fps: c_int,
-        infinite: c_int
+        infinite: c_int,
     );
 }
 
@@ -76,6 +77,7 @@ struct GlobalState {
     sdl_controller1: *mut sdl2::controller::GameController,
     sdl_controller2: *mut sdl2::controller::GameController,
     tas: *mut Tas,
+    tas_frame: usize,
 }
 
 static mut GLOBAL_STATE:Option<GlobalState> = None;
@@ -103,8 +105,14 @@ fn main() {
         RENDER_HEIGHT as u32
     ).unwrap());
     let mut nes = Box::new(create_nes(joystick1, joystick2));
-    if let Ok(mut fh) = File::create(ROM_BEGIN_SAVESTATE) {
-        nes.save(&mut fh);
+    match File::open(ROM_BEGIN_SAVESTATE) {
+        Ok(mut fh) => nes.load(&mut fh),
+        Err(ref e) if e.kind() == ErrorKind::NotFound => {
+            if let Ok(mut fh) = File::create(ROM_BEGIN_SAVESTATE) {
+                nes.save(&mut fh);
+            }
+        },
+        Err(e) => { eprintln!("DEBUG - Unhandled file error - {:?}", e) },
     }
     let desired_spec = AudioSpecDesired {
         freq: Some(AUDIO_FREQUENCY as i32),
@@ -146,6 +154,7 @@ fn main() {
         sdl_controller1: null_mut(),
         sdl_controller2: null_mut(),
         tas: &mut *tas,
+        tas_frame: 0,
     });
     }
 
@@ -178,7 +187,6 @@ fn main() {
             //SDL_Delay(time_to_next_frame());
         }
     }
-
 }
 
 extern fn main_loop() {
@@ -208,31 +216,45 @@ extern fn main_loop() {
 
     for event in event_pump.poll_iter() {
         match event {
+            // Exit game
             Event::Quit {..} |
             Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
                 std::process::exit(0);
             },
+            // Break CPU debugger
             Event::KeyDown { keycode: Some(Keycode::Pause), .. } => {
                 nes.break_debugger();
             },
+            // Save state
             Event::KeyDown { keycode: Some(Keycode::F5), .. } => {
                 let mut file = File::create(DEFAULT_SAVESTATE).unwrap();
                 nes.save(&mut file);
                 let mut tas_file = File::create(DEFAULT_RECORDING).unwrap();
                 tas.save(&mut tas_file);
             },
+            // Load State
             Event::KeyDown { keycode: Some(Keycode::F6), .. } => {
                 let mut file = File::open(DEFAULT_SAVESTATE).unwrap();
                 nes.load(&mut file);
                 let mut tas_file = File::open(DEFAULT_RECORDING).unwrap();
                 tas.load(&mut tas_file);
             },
+            // Play recording from initial state
             Event::KeyDown { keycode: Some(Keycode::F7), .. } => {
                 let mut tas_fh = File::open(DEFAULT_RECORDING).unwrap();
                 tas.load(&mut tas_fh);
                 let mut ss_fh = File::open(ROM_BEGIN_SAVESTATE).unwrap();
                 nes.load(&mut ss_fh);
+                st.tas_frame = 0;
             },
+            // Begin recording at current point
+            Event::KeyDown { keycode: Some(Keycode::F8), .. } => {
+                let mut ss_fh = File::create(ROM_BEGIN_SAVESTATE).unwrap();
+                nes.save(&mut ss_fh);
+                *tas = Tas::new();
+                st.tas_frame = 0;
+            },
+            // Attach controller
             Event::ControllerDeviceAdded { which: id, .. } => {
                 eprintln!("DEBUG - CONTROLLER ADDED - {}", id);
                 match id {
@@ -246,7 +268,7 @@ extern fn main_loop() {
         }
     }
 
-    let frame = nes.current_frame() as usize;
+    let frame = st.tas_frame;
     let j1_bmask = tas.get_inputs(frame).unwrap_or_else(|| {
         let buttons = get_button_mask(st.sdl_controller1);
         if RECORDING {
@@ -254,6 +276,7 @@ extern fn main_loop() {
         }
         buttons
     });
+    st.tas_frame += 1;
     let j2_bmask = get_button_mask(st.sdl_controller2);
     joystick1.set_buttons(j1_bmask);
     joystick2.set_buttons(j2_bmask);

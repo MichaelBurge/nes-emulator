@@ -45,6 +45,7 @@ struct Headless {
     out_fh: Box<Write>,
     is_synchronized: bool,
     num_commands: u64,
+    recording_file: Option<String>,
 }
 
 impl Headless {
@@ -63,18 +64,18 @@ impl Headless {
     fn dispatch_command(&mut self) {
         let b = self.read_byte();
         match b {
-            0  => panic!("'Abort with error' received. Check for synchronization issues."),
-            1  => self.command_load_rom(),
-            2  => self.command_step_frame(),
-            3  => self.command_render_frame(),
-            4  => self.command_set_inputs(),
-            5  => self.command_save_state(),
-            6  => self.command_load_state(),
-            7  => self.command_get_info(),
-            8  => self.command_step(),
-            9  => self.command_save_tas(),
+            0   => panic!("'Abort with error' received. Check for synchronization issues."),
+            1   => self.command_load_rom(),
+            2   => self.command_step_frame(),
+            3   => self.command_render_frame(),
+            4   => self.command_set_inputs(),
+            5   => self.command_save_state(),
+            6   => self.command_load_state(),
+            7   => self.command_get_info(),
+            8   => self.command_step(),
+            9   => self.command_save_tas(),
             10  => self.command_peek(),
-            11 => self.command_poke(),
+            11  => self.command_poke(),
             _ => panic!("Unknown command {}", b),
         }
         self.num_commands += 1;
