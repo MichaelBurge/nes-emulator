@@ -78,6 +78,7 @@ struct GlobalState {
     sdl_controller2: *mut sdl2::controller::GameController,
     tas: *mut Tas,
     tas_frame: usize,
+    turbo_mode: bool,
 }
 
 static mut GLOBAL_STATE:Option<GlobalState> = None;
@@ -155,6 +156,7 @@ fn main() {
         sdl_controller2: null_mut(),
         tas: &mut *tas,
         tas_frame: 0,
+        turbo_mode: false,
     });
     }
 
@@ -169,15 +171,6 @@ fn main() {
             let now = Instant::now();
             main_loop();
             let after = Instant::now();
-            let target_millis = Duration::from_millis(1000 / 60);
-            let sleep_millis = target_millis.checked_sub(after - now);
-            match sleep_millis {
-                None => {}, // Took too long last frame
-                Some(sleep_millis) => {
-                    //eprintln!("DEBUG - SLEEP - {:?}", sleep_millis);
-                    ::std::thread::sleep(sleep_millis);
-                }
-            }
             num_frames += 1;
             if after - every_second >= Duration::from_millis(1000) {
                 eprintln!("DEBUG - FPS - {} {:?} {:?}", num_frames, after - every_second, after - now);
@@ -190,6 +183,7 @@ fn main() {
 }
 
 extern fn main_loop() {
+    let now = Instant::now();
     let st = unsafe { GLOBAL_STATE.as_mut().unwrap() };
     // let mut sdl_context = unsafe { &mut *st.sdl_context };
     let joystick1:&mut Joystick = unsafe { &mut *st.joystick1 };
@@ -201,7 +195,6 @@ extern fn main_loop() {
     let mut texture = unsafe { &mut *st.texture };
     let mut controller_subsystem = unsafe { &mut *st.controller_subsystem };
     let mut tas = unsafe { &mut *st.tas };
-
     // eprintln!("DEBUG - POINTERS - ({:p}, {:?}) ({:p}, {:?}) {:p} {:p} {:p} {:p} {:p}",
     //           joystick1,
     //           joystick1,
@@ -263,7 +256,11 @@ extern fn main_loop() {
                     _ => eprintln!("DEBUG - UNEXPECTED CONTROLLER ID {}", id),
                 }
 
-            }
+            },
+            // Toggle Turbo Mode
+            Event::KeyDown { keycode: Some(Keycode::Tab), .. } => {
+                st.turbo_mode = ! st.turbo_mode;
+            },
             _ => {}
         }
     }
@@ -285,6 +282,19 @@ extern fn main_loop() {
     enqueue_frame_audio(&audio_device, &mut nes.apu.samples);
 
     canvas.present();
+
+    let after = Instant::now();
+    let target_millis = Duration::from_millis(1000 / 60);
+    let sleep_millis = target_millis.checked_sub(after - now);
+    match sleep_millis {
+        None => {}, // Took too long last frame
+        Some(sleep_millis) => {
+            //eprintln!("DEBUG - SLEEP - {:?}", sleep_millis);
+            if ! st.turbo_mode {
+                ::std::thread::sleep(sleep_millis);
+            }
+        }
+    }
 }
 
 struct ApuSampler {
