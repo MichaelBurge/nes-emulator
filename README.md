@@ -14,6 +14,10 @@ $ cargo run --release --bin nes-emulator
 
 The emulator loads a ROM in iNES format located at the hardcoded path `roms/mario.nes`.
 
+On Windows, you may need to statically-link SDL by enabling the appropriate feature:
+```
+$ cargo run --release --bin nes-emulator --features 'sdl2/bundled'
+```
 ## Inputs
 
 The emulator has been tested with an Xbox 360 controller, but should work with any controller the SDL library recognizes.
@@ -24,3 +28,5 @@ Additionally, these keyboard keys control the emulator:
 * F5: Saves a savestate
 * F6: Loads the most recent savestate
 * F7: Restart the current ROM and playback a video of recorded inputs
+* F8: Set video recording start point
+* Tab: Toggles "turbo mode", which removes the 60 FPS limit.
