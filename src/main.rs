@@ -99,12 +99,15 @@ fn main() {
 
     let mut canvas = Box::new(window.into_canvas().build().unwrap());
     let texture_creator = canvas.texture_creator();
-    let mut texture = Box::new(texture_creator.create_texture(
-        PixelFormatEnum::RGB24,
-        TextureAccess::Streaming,
-        RENDER_WIDTH as u32,
-        RENDER_HEIGHT as u32
-    ).unwrap());
+    let mut texture = {
+        let mut tex = texture_creator.create_texture(
+                PixelFormatEnum::RGB24,
+                TextureAccess::Streaming,
+                RENDER_WIDTH as u32,
+                RENDER_HEIGHT as u32
+            ).unwrap();
+        unsafe { Box::new(std::mem::transmute(tex)) }
+    };
     let mut nes = Box::new(create_nes(joystick1, joystick2));
     match File::open(ROM_BEGIN_SAVESTATE) {
         Ok(mut fh) => nes.load(&mut fh),
@@ -336,28 +339,6 @@ impl ApuSampler {
             t += ratio;
         }
     }
-    // fn resample(last_sample:&mut f32, samples: &[f32], resamples:&mut [f32]) {
-    //     let num_samples = samples.len();
-    //     let num_resamples = resamples.len();
-    //     eprintln!("DEBUG - SAMPLES - {} {}", num_samples, num_resamples);
-    //     let ratio = num_samples as f32 / num_resamples as f32;
-    //     let mut count = 0.0f32;
-    //     let mut sample_idx = 0;
-    //     for i in resamples.iter_mut() {
-    //         if num_samples == 0 {
-    //             *i = *last_sample;
-    //         } else {
-    //             let sample = samples[sample_idx];
-    //             *last_sample = sample;
-    //             *i = sample;
-    //             if count >= 1.0 {
-    //                 sample_idx += count as usize;
-    //                 count %= 1.0;
-    //             }
-    //             count += ratio;
-    //         }
-    //     }
-    // }
 }
 
 impl AudioCallback for ApuSampler {
@@ -371,22 +352,7 @@ impl AudioCallback for ApuSampler {
         // eprintln!("DEBUG - SAMPLES - {} {} {:?}", samples_slice.len(), out.len(), new_time - self.last_time);
         ApuSampler::resample(&mut self.last_sample, samples_slice, out);
         apu.samples.clear();
-        // if apu.samples.len() > 1000000 {
-        //     eprintln!("TOO MANY SAMPLES {}", apu.samples.len());
-        // }
-        // for x in out.iter_mut() {
-        //     if self.resample_step == 0 {
-        //         self.sample = (apu.samples.pop_front().unwrap_or(0.0))*self.volume;
-        //         if self.sample != self.last_sample {
-        //             eprintln!("SAMPLE {} {}", self.last_sample, self.sample);
-        //             self.last_sample = self.sample;
-        //         }
-        //         self.resample_step = SAMPLES_PER_CLOCK;
-        //     } else {
-        //         self.resample_step -= 1;
-        //     }
-        //     *x = self.sample;
-        // }
+
         self.last_time = new_time;
     }
 }
