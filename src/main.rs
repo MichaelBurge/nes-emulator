@@ -55,7 +55,7 @@ extern {
 const CLOCKS_PER_FRAME:u32 = 29780;
 const APU_FREQUENCY:i32 = 240;
 const AUDIO_FREQUENCY:usize = 44100;
-const SAMPLES_PER_FRAME:usize = 2048;
+const SAMPLES_PER_FRAME:usize = 1024;
 const SCALE:usize = 4;
 const RECORDING:bool = true;
 const ROM_BEGIN_SAVESTATE:&'static str= "initial.state";
@@ -239,6 +239,7 @@ extern fn main_loop() {
                 let mut ss_fh = File::open(ROM_BEGIN_SAVESTATE).unwrap();
                 nes.load(&mut ss_fh);
                 st.tas_frame = 0;
+                nes.cpu.poke(0x075a, 3);
             },
             // Begin recording at current point
             Event::KeyDown { keycode: Some(Keycode::F8), .. } => {
@@ -408,8 +409,11 @@ fn present_frame(canvas: &mut Canvas<Window>, texture: &mut Texture, ppu_pixels:
 
 fn enqueue_frame_audio(audio:&AudioQueue<f32>, samples:&mut Vec<f32>) {
     let xs = samples.as_slice();
-    if audio.size() as usize <= 4*SAMPLES_PER_FRAME {
+    let bytes_per_sample:u32 = 8;
+    if audio.size() as usize <= 2*(bytes_per_sample as usize)*SAMPLES_PER_FRAME {
         audio.queue(&xs);
+    } else {
+        eprintln!("DEBUG - SAMPLE OVERFLOW - {}", audio.size() / bytes_per_sample);
     }
     samples.clear();
 }

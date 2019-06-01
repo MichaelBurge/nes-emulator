@@ -29,6 +29,9 @@ const ENABLE_TRIANGLE:bool = true;
 const ENABLE_NOISE:bool = true;
 const ENABLE_DMC:bool = false;
 
+const SAMPLES_PER_FRAME:f64 = 735.0; // 44100 Hz audio / 60 FPS
+const CLOCKS_PER_FRAME:f64 = 29780.0;
+
 pub fn map_apu_port(ptr: u16) -> Option<ApuPort> {
     match ptr {
         0x4000 => Some(SQ1_VOL),
@@ -160,13 +163,13 @@ impl Clocked for Apu {
             self.noise.clock_quarter_frame();
             self.dmc.clock_half_frame();
         }
-        if self.sample_timer >= 1.0 && self.is_recording {
+        if self.sample_timer <= 0.0 && self.is_recording {
             let sample = self.sample();
             //let sample = 0.1;
             self.samples.push(sample);
-            self.sample_timer %= 1.0;
+            self.sample_timer += self.sample_rate;
         }
-        self.sample_timer += self.sample_rate;
+        self.sample_timer -= 1.0;
         self.cycle += 1;
     }
 }
@@ -177,7 +180,7 @@ impl Apu {
             cycle: 0,
             is_recording: true,
             samples: Vec::new(),
-            sample_rate: 1024.0 / 30000.0,
+            sample_rate: CLOCKS_PER_FRAME / SAMPLES_PER_FRAME,
             sample_timer: 0.0,
             frame_counter: FrameCounter::new(),
             pulse1: Pulse::new(false),

@@ -134,6 +134,19 @@ impl Nes {
     pub fn run_frame(&mut self) {
         run_clocks(self, 29780);
     }
+    pub fn run_frame_headless(&mut self) {
+        let cpu_clocks_per_scanline = 114; // 113.667
+        // 0 and 241 are the pre-render and post-render scanlines
+        for _i in 0..241 {
+            run_clocks(&mut *self.cpu, cpu_clocks_per_scanline);
+            // TODO: Signal on is_scanline_irq
+        }
+        // TODO: Vblank should only be triggered if rendering is enabled.
+        self.cpu.nmi();
+        for _i in 242..261 {
+            run_clocks(&mut *self.cpu, cpu_clocks_per_scanline);
+        }
+    }
     pub fn break_debugger(&mut self) {
         self.cpu.break_debugger();
     }
@@ -188,7 +201,7 @@ impl Clocked for Nes {
             self.cpu.irq();
             self.ppu.is_scanline_irq = false;
         }
-        self.apu.clock(); // Clocked by SDL callback.
+        self.apu.clock();
     }
 }
 

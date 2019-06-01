@@ -45,7 +45,7 @@ struct Headless {
     out_fh: Box<Write>,
     is_synchronized: bool,
     num_commands: u64,
-    recording_file: Option<String>,
+    is_rendering: bool,
 }
 
 impl Headless {
@@ -59,6 +59,7 @@ impl Headless {
             out_fh: out_fh,
             is_synchronized: true,
             num_commands: 0,
+            is_rendering: true,
         }
     }
     fn dispatch_command(&mut self) {
@@ -76,6 +77,7 @@ impl Headless {
             9   => self.command_save_tas(),
             10  => self.command_peek(),
             11  => self.command_poke(),
+            12  => self.command_set_rendering(),
             _ => panic!("Unknown command {}", b),
         }
         self.num_commands += 1;
@@ -102,7 +104,11 @@ impl Headless {
         }
     }
     fn command_step_frame(&mut self) {
-        self.nes.as_mut().unwrap().run_frame();
+        if self.is_rendering {
+            self.nes.as_mut().unwrap().run_frame();
+        } else {
+            self.nes.as_mut().unwrap().run_frame_headless();
+        }
     }
     fn command_render_frame(&mut self) {
         let render_style = self.read_byte();
@@ -147,6 +153,10 @@ impl Headless {
         let ptr = self.read_value::<u16>();
         let v = self.read_byte();
         self.nes.as_mut().unwrap().cpu.poke(ptr, v)
+    }
+    fn command_set_rendering(&mut self) {
+        let is_rendering = self.read_byte();
+        self.is_rendering = is_rendering > 0;
     }
 
     fn read_value<T:Default + Savable + Debug>(&mut self) -> T {
