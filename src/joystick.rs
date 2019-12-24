@@ -16,11 +16,11 @@ pub struct Joystick {
 }
 
 impl Savable for Joystick {
-    fn save(&self, fh: &mut Write) {
+    fn save(&self, fh: &mut dyn Write) {
         self.buttons_register.get().save(fh);
         self.strobe_active.save(fh);
     }
-    fn load(&mut self, fh: &mut Read) {
+    fn load(&mut self, fh: &mut dyn Read) {
         let mut buttons_register = 0;
         buttons_register.load(fh);
         self.buttons_register.set(buttons_register);

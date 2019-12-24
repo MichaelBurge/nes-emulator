@@ -41,16 +41,16 @@ struct Headless {
     joystick1: *mut Joystick,
     joystick2: *mut Joystick,
     nes: Option<Box<Nes>>,
-    in_fh: Box<Read>,
-    out_fh: Box<Write>,
+    in_fh: Box<dyn Read>,
+    out_fh: Box<dyn Write>,
     is_synchronized: bool,
     num_commands: u64,
     is_rendering: bool,
 }
 
 impl Headless {
-    pub fn new(in_fh: Box<Read>, out_fh: Box<Write>) -> Headless {
-        let mut nes = None;
+    pub fn new(in_fh: Box<dyn Read>, out_fh: Box<dyn Write>) -> Headless {
+        let nes = None;
         Headless {
             joystick1: null_mut(),
             joystick2: null_mut(),
@@ -88,7 +88,7 @@ impl Headless {
     }
 
     fn command_load_rom(&mut self) {
-        let mut record_tas = self.read_byte();
+        let _record_tas = self.read_byte();
         let filename = self.read_length_string();
         let mut joystick1 = Box::new(Joystick::new());
         let mut joystick2 = Box::new(Joystick::new());

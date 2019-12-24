@@ -36,7 +36,7 @@ pub struct C6502 {
     decimal: bool,
     overflow: bool,
     negative: bool,
-    pub mapper: Box<AddressSpace>,
+    pub mapper: Box<dyn AddressSpace>,
     pub counter: usize,
     pub clocks: usize,
     debugger: C6502Debugger,
@@ -45,7 +45,7 @@ pub struct C6502 {
 }
 
 impl Savable for C6502 {
-    fn save(&self, fh: &mut Write) {
+    fn save(&self, fh: &mut dyn Write) {
         self.acc.save(fh);
         self.x.save(fh);
         self.y.save(fh);
@@ -63,7 +63,7 @@ impl Savable for C6502 {
         self.is_tracing.save(fh);
         self.clocks_to_pause.save(fh);
     }
-    fn load(&mut self, fh: &mut Read) {
+    fn load(&mut self, fh: &mut dyn Read) {
         self.acc.load(fh);
         self.x.load(fh);
         self.y.load(fh);
@@ -84,7 +84,7 @@ impl Savable for C6502 {
 }
 
 impl C6502 {
-    pub fn new(mapper: Box<AddressSpace>) -> C6502 {
+    pub fn new(mapper: Box<dyn AddressSpace>) -> C6502 {
         return C6502 {
             acc: 0,
             x: 0,
@@ -1380,7 +1380,7 @@ mod tests {
             vec!(0xa9, 0x01, // LDA #$01
                  0x4a,);     // LSR
         let mut c = create_test_cpu(&program);
-        c.set_status_register_from_byte(0x65);
+         c.set_status_register_from_byte(0x65);
         c.run_instructions(2);
         assert_eq!(c.status_register_byte(true), 0x67);
     }
@@ -1415,7 +1415,7 @@ mod tests {
             );
         let mut c = create_test_cpu(&program);
         let mapper:&mut LoggedAddressSpace =
-            unsafe { &mut *(c.mapper.deref_mut() as *mut AddressSpace as *mut LoggedAddressSpace) };
+            unsafe { &mut *(c.mapper.deref_mut() as *mut dyn AddressSpace as *mut LoggedAddressSpace) };
         c.run_instructions(2);
         assert_eq!(mapper.copy_log(), [
             (0, AccessType::Read, ADDRESS_TEST_PROGRAM+0, 0xa9),

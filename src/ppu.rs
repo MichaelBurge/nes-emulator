@@ -84,7 +84,7 @@ pub struct Ppu {
 }
 
 impl Savable for Ppu {
-    fn save(&self, fh: &mut Write) {
+    fn save(&self, fh: &mut dyn Write) {
         self.display.save(fh);
         self.oam.save(fh);
         self.mapper.save(fh);
@@ -121,7 +121,7 @@ impl Savable for Ppu {
         self.sprite_priorities.save(fh);
         self.sprite_indices.save(fh);
     }
-    fn load(&mut self, fh: &mut Read) {
+    fn load(&mut self, fh: &mut dyn Read) {
         self.display.load(fh);
         self.oam.load(fh);
         self.mapper.load(fh);
@@ -186,7 +186,7 @@ struct PpuRegisters {
 }
 
 impl Savable for PpuRegisters {
-    fn save(&self, fh: &mut Write) {
+    fn save(&self, fh: &mut dyn Write) {
         self.v.save(fh);
         self.t.save(fh);
         self.x.save(fh);
@@ -202,7 +202,7 @@ impl Savable for PpuRegisters {
         self.show_leftmost_background.save(fh);
         self.show_leftmost_sprite.save(fh);
     }
-    fn load(&mut self, fh: &mut Read) {
+    fn load(&mut self, fh: &mut dyn Read) {
         self.v.load(fh);
         self.t.load(fh);
         self.x.load(fh);
@@ -455,11 +455,11 @@ pub struct CpuPpuInterconnect {
 }
 
 impl Savable for CpuPpuInterconnect {
-    fn save(&self, fh: &mut Write) {
+    fn save(&self, fh: &mut dyn Write) {
         self.ppu.save(fh);
         self.cpu.save(fh);
     }
-    fn load(&mut self, fh: &mut Read) {
+    fn load(&mut self, fh: &mut dyn Read) {
         self.ppu.load(fh);
         self.cpu.load(fh);
     }
@@ -552,10 +552,10 @@ impl PaletteControl {
 }
 
 impl Savable for PaletteControl {
-    fn save(&self, fh:&mut Write) {
+    fn save(&self, fh:&mut dyn Write) {
         self.memory.save(fh);
     }
-    fn load(&mut self, fh:&mut Read) {
+    fn load(&mut self, fh:&mut dyn Read) {
         self.memory.load(fh);
     }
 }

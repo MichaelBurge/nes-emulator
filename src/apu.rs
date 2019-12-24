@@ -131,10 +131,10 @@ pub struct Apu {
 }
 
 impl Savable for Apu {
-    fn save(&self, fh: &mut Write) {
+    fn save(&self, fh: &mut dyn Write) {
         // TODO
     }
-    fn load(&mut self, fh: &mut Read) {
+    fn load(&mut self, fh: &mut dyn Read) {
         // TODO
     }
 }

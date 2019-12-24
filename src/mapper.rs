@@ -45,10 +45,10 @@ impl Ram {
 }
 
 impl Savable for Ram {
-    fn save(&self, fh: &mut Write) {
+    fn save(&self, fh: &mut dyn Write) {
         self.bs.save(fh);
     }
-    fn load(&mut self, fh: &mut Read) {
+    fn load(&mut self, fh: &mut dyn Read) {
         self.bs.load(fh);
     }
 }
@@ -75,8 +75,8 @@ impl<T:AddressSpace> AddressSpace for *mut T {
 
 impl<T:AddressSpace> Savable for *mut T {
     // The pointer should still be valid, since this Trait updates objects in-place.
-    fn save(&self, _:&mut Write) { }
-    fn load(&mut self, _:&mut Read) { }
+    fn save(&self, _:&mut dyn Write) { }
+    fn load(&mut self, _:&mut dyn Read) { }
 }
 
 pub struct Rom {
@@ -90,10 +90,10 @@ impl Rom {
 }
 
 impl Savable for Rom {
-    fn save(&self, fh: &mut Write) {
+    fn save(&self, fh: &mut dyn Write) {
         self.bs.save(fh);
     }
-    fn load(&mut self, fh: &mut Read) {
+    fn load(&mut self, fh: &mut dyn Read) {
         self.bs.load(fh);
     }
 }
@@ -135,14 +135,14 @@ impl MirroredAddressSpace {
 }
 
 impl Savable for MirroredAddressSpace {
-    fn save(&self, fh: &mut Write) {
+    fn save(&self, fh: &mut dyn Write) {
         self.base.save(fh);
         self.base_begin.save(fh);
         self.base_end.save(fh);
         self.extended_begin.save(fh);
         self.extended_end.save(fh);
     }
-    fn load(&mut self, fh: &mut Read) {
+    fn load(&mut self, fh: &mut dyn Read) {
         self.base.load(fh);
         self.base_begin.load(fh);
         self.base_end.load(fh);
@@ -169,8 +169,8 @@ impl NullAddressSpace {
 }
 
 impl Savable for NullAddressSpace {
-    fn save(&self, _fh: &mut Write) {}
-    fn load(&mut self, _fh: &mut Read) { }
+    fn save(&self, _fh: &mut dyn Write) {}
+    fn load(&mut self, _fh: &mut dyn Read) { }
 }
 
 impl AddressSpace for NullAddressSpace {
@@ -197,13 +197,13 @@ impl Mapping {
 }
 
 impl Savable for Mapping {
-    fn save(&self, fh: &mut Write) {
+    fn save(&self, fh: &mut dyn Write) {
         self.0.save(fh);
         self.1.save(fh);
         self.2.save(fh);
         self.3.save(fh);
     }
-    fn load(&mut self, fh: &mut Read) {
+    fn load(&mut self, fh: &mut dyn Read) {
         self.0.load(fh);
         self.1.load(fh);
         self.2.load(fh);
@@ -216,10 +216,10 @@ pub struct Mapper {
 }
 
 impl Savable for Mapper {
-    fn save(&self, fh: &mut Write) {
+    fn save(&self, fh: &mut dyn Write) {
         self.mappings.as_slice().save(fh);
     }
-    fn load(&mut self, fh: &mut Read) {
+    fn load(&mut self, fh: &mut dyn Read) {
         self.mappings.as_mut_slice().load(fh);
     }
 }
@@ -300,17 +300,17 @@ pub enum AccessType { Read, Write }
 pub type LoggedAddressSpaceRecord = (usize, AccessType, u16, u8);
 
 pub struct LoggedAddressSpace {
-    pub space: Box<AddressSpace>,
+    pub space: Box<dyn AddressSpace>,
     pub log: UnsafeCell<Vec<LoggedAddressSpaceRecord>>,
 }
 
 impl Savable for LoggedAddressSpace {
-    fn save(&self, _fh: &mut Write) { panic!("save() unimplemented"); }
-    fn load(&mut self, _fh: &mut Read) { panic!("load() unimplemented"); }
+    fn save(&self, _fh: &mut dyn Write) { panic!("save() unimplemented"); }
+    fn load(&mut self, _fh: &mut dyn Read) { panic!("load() unimplemented"); }
 }
 
 impl LoggedAddressSpace {
-    pub fn new(space:Box<AddressSpace>) -> LoggedAddressSpace {
+    pub fn new(space:Box<dyn AddressSpace>) -> LoggedAddressSpace {
         LoggedAddressSpace {
             space: space,
             log: UnsafeCell::new(vec!()),

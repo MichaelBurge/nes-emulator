@@ -31,7 +31,7 @@ pub struct Nes {
 }
 
 impl Nes {
-    fn new(cpu_mapper: Box<AddressSpace>) -> Nes {
+    fn new(cpu_mapper: Box<dyn AddressSpace>) -> Nes {
         return Nes {
             cpu: Box::new(C6502::new(cpu_mapper)),
             apu: Box::new(Apu::new()),
@@ -104,7 +104,7 @@ pub fn read_ines(filename: String) -> Result<Ines, io::Error> {
     return Ok(ret);
 }
 
-pub fn load_ines(rom: Ines, joystick1: Box<AddressSpace>, joystick2: Box<AddressSpace>) -> Nes {
+pub fn load_ines(rom: Ines, joystick1: Box<dyn AddressSpace>, joystick2: Box<dyn AddressSpace>) -> Nes {
     if rom.mapper != 0 {
         panic!("Only mapper 0 supported. Found {}", rom.mapper);
     }
@@ -153,7 +153,7 @@ impl Nes {
     pub fn current_frame(&self) -> u32 {
         return self.ppu.current_frame();
     }
-    fn map_nes_cpu(&mut self, joystick1: Box<AddressSpace>, _joystick2: Box<AddressSpace>, cartridge: Box<AddressSpace>) {
+    fn map_nes_cpu(&mut self, joystick1: Box<dyn AddressSpace>, _joystick2: Box<dyn AddressSpace>, cartridge: Box<dyn AddressSpace>) {
         let mut mapper:Mapper = Mapper::new();
         let cpu_ram:Ram = Ram::new(0x800);
         let cpu_ppu:CpuPpuInterconnect = CpuPpuInterconnect::new(self.ppu.deref_mut(), self.cpu.deref_mut());
@@ -163,7 +163,7 @@ impl Nes {
         mapper.map_address_space(0x4020, 0xFFFF, cartridge, true);
         mapper.map_mirrored(0x0000, 0x07ff, 0x0000, 0x1fff, Box::new(cpu_ram), false);
         mapper.map_mirrored(0x2000, 0x2007, 0x2000, 0x3fff, Box::new(cpu_ppu), true);
-        mapper.map_address_space(0x4000, 0x4013, Box::new(apu), true);;
+        mapper.map_address_space(0x4000, 0x4013, Box::new(apu), true);
         mapper.map_address_space(0x4015, 0x4015, Box::new(apu), true);
         mapper.map_address_space(0x4017, 0x4017, Box::new(apu), true); // TODO - 0x4017 is also mapped to joystick2
         mapper.map_address_space(0x4017, 0x4017, _joystick2, false); // TODO -- Transfers ownership of joystick2 so it isn't deallocated
@@ -174,7 +174,7 @@ impl Nes {
         self.cpu.mapper = Box::new(mapper);
         self.cpu.initialize();
     }
-    fn map_nes_ppu(&mut self, cartridge_ppu: Box<AddressSpace>) {
+    fn map_nes_ppu(&mut self, cartridge_ppu: Box<dyn AddressSpace>) {
         // https://wiki.nesdev.com/w/index.php/PPU_memory_map
         let mut mapper:Mapper = Mapper::new();
         let ppu_ram:Ram = Ram::new(0x800);
@@ -208,13 +208,13 @@ impl Clocked for Nes {
 use crate::serialization::file_position;
 
 impl Savable for Nes {
-    fn save(&self, fh: &mut Write) {
+    fn save(&self, fh: &mut dyn Write) {
         self.cpu.save(fh);
         self.apu.save(fh);
         self.ppu.save(fh);
         0xF00Fu32.save(fh);
     }
-    fn load(&mut self, fh: &mut Read) {
+    fn load(&mut self, fh: &mut dyn Read) {
         self.cpu.load(fh);
         self.apu.load(fh);
         self.ppu.load(fh);
@@ -246,10 +246,10 @@ impl Tas {
 }
 
 impl Savable for Tas {
-    fn save(&self, fh: &mut Write) {
+    fn save(&self, fh: &mut dyn Write) {
         self.inputs.save(fh);
     }
-    fn load(&mut self, fh: &mut Read) {
+    fn load(&mut self, fh: &mut dyn Read) {
         self.inputs.load(fh);
     }
 }

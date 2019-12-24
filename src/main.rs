@@ -21,7 +21,9 @@ use sdl2::keyboard::Keycode;
 use sdl2::render::Canvas;
 use sdl2::render::Texture;
 use sdl2::render::TextureAccess;
+use sdl2::render::TextureCreator;
 use sdl2::video::Window;
+use sdl2::video::WindowContext;
 use sdl2::EventPump;
 use sdl2::AudioSubsystem;
 use sdl2::VideoSubsystem;
@@ -82,7 +84,7 @@ struct GlobalState {
 }
 
 static mut GLOBAL_STATE:Option<GlobalState> = None;
-
+static mut TEXTURE_CREATOR:Option<TextureCreator<WindowContext>> = None;
 fn main() {
     let mut sdl_context  = Box::new(sdl2::init().unwrap());
     let mut video_subsystem = Box::new(sdl_context.video().unwrap());
@@ -183,6 +185,7 @@ fn main() {
             //SDL_Delay(time_to_next_frame());
         }
     }
+    //std::unreachable!();
 }
 
 extern fn main_loop() {
@@ -357,7 +360,7 @@ impl AudioCallback for ApuSampler {
     }
 }
 
-fn create_nes(joystick1:Box<AddressSpace>, joystick2:Box<AddressSpace>) -> Nes {
+fn create_nes(joystick1:Box<dyn AddressSpace>, joystick2:Box<dyn AddressSpace>) -> Nes {
     //let filename = "roms/donkey_kong.nes";
     let filename = "roms/mario.nes";
     match read_ines(filename.to_string()) {
