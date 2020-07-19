@@ -1,15 +1,14 @@
-mod common;
-mod c6502;
-mod ppu;
 mod apu;
+mod c6502;
+mod common;
+mod joystick;
 mod mapper;
 mod nes;
-mod joystick;
+mod ppu;
 mod serialization;
 
 use crate::joystick::Joystick;
-use crate::nes::{read_ines,load_ines};
-
+use crate::nes::{load_ines, read_ines};
 
 fn main() {
     let joystick1 = Box::new(Joystick::new());

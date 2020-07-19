@@ -3,7 +3,7 @@
 #![allow(dead_code)] // TODO
 #![allow(unused_variables)]
 
-use crate::common::{Clocked, ternary, get_bit};
+use crate::common::{get_bit, ternary, Clocked};
 use crate::mapper::AddressSpace;
 use crate::serialization::Savable;
 
@@ -13,24 +13,38 @@ use std::io::Write;
 
 // https://wiki.nesdev.com/w/index.php/2A03
 pub enum ApuPort {
-    SQ1_VOL, SQ1_SWEEP, SQ1_LO, SQ1_HI,
-    SQ2_VOL, SQ2_SWEEP, SQ2_LO, SQ2_HI,
-    TRI_LINEAR, TRI_LO, TRI_HI,
-    NOISE_VOL, NOISE_LO, NOISE_HI,
-    DMC_FREQ, DMC_RAW, DMC_START, DMC_LEN,
-    SND_CHN, FRAME_COUNTER,
+    SQ1_VOL,
+    SQ1_SWEEP,
+    SQ1_LO,
+    SQ1_HI,
+    SQ2_VOL,
+    SQ2_SWEEP,
+    SQ2_LO,
+    SQ2_HI,
+    TRI_LINEAR,
+    TRI_LO,
+    TRI_HI,
+    NOISE_VOL,
+    NOISE_LO,
+    NOISE_HI,
+    DMC_FREQ,
+    DMC_RAW,
+    DMC_START,
+    DMC_LEN,
+    SND_CHN,
+    FRAME_COUNTER,
 }
 
 use ApuPort::*;
 
-const ENABLE_PULSE1:bool = true;
-const ENABLE_PULSE2:bool = true;
-const ENABLE_TRIANGLE:bool = true;
-const ENABLE_NOISE:bool = true;
-const ENABLE_DMC:bool = false;
+const ENABLE_PULSE1: bool = true;
+const ENABLE_PULSE2: bool = true;
+const ENABLE_TRIANGLE: bool = true;
+const ENABLE_NOISE: bool = true;
+const ENABLE_DMC: bool = false;
 
-const SAMPLES_PER_FRAME:f64 = 735.0; // 44100 Hz audio / 60 FPS
-const CLOCKS_PER_FRAME:f64 = 29780.0;
+const SAMPLES_PER_FRAME: f64 = 735.0; // 44100 Hz audio / 60 FPS
+const CLOCKS_PER_FRAME: f64 = 29780.0;
 
 pub fn map_apu_port(ptr: u16) -> Option<ApuPort> {
     match ptr {
@@ -56,13 +70,13 @@ pub fn map_apu_port(ptr: u16) -> Option<ApuPort> {
         0x4013 => Some(DMC_LEN),
         0x4015 => Some(SND_CHN),
         0x4017 => Some(FRAME_COUNTER),
-        _      => None,
+        _ => None,
     }
 }
 
 // ttps://wiki.nesdev.com/w/index.php/APU_Frame_Counter
 struct FrameCounter {
-    step:u16,
+    step: u16,
     interrupt_inhibit: bool,
     mode: bool, // false=4-step, true=5-step
 }
@@ -81,7 +95,7 @@ impl FrameCounter {
             (_, 7456) => true,
             (_, 11185) => true,
             (false, 14914) => true,
-            (true,  18640) => true,
+            (true, 18640) => true,
             _ => false,
         }
     }
@@ -99,7 +113,7 @@ impl FrameCounter {
             _ => false,
         }
     }
-    pub fn write_control(&mut self, value:u8) {
+    pub fn write_control(&mut self, value: u8) {
         self.mode = get_bit(value, 7) > 0;
         self.interrupt_inhibit = get_bit(value, 6) > 0;
     }
@@ -117,17 +131,17 @@ impl Clocked for FrameCounter {
 }
 
 pub struct Apu {
-    pub samples:Vec<f32>,
-    pub is_recording:bool,
-    cycle:u64,
-    sample_rate:f64,
-    sample_timer:f64,
+    pub samples: Vec<f32>,
+    pub is_recording: bool,
+    cycle: u64,
+    sample_rate: f64,
+    sample_timer: f64,
     frame_counter: FrameCounter,
-    pulse1:Pulse,
-    pulse2:Pulse,
-    triangle:Triangle,
-    noise:Noise,
-    dmc:Dmc,
+    pulse1: Pulse,
+    pulse2: Pulse,
+    triangle: Triangle,
+    noise: Noise,
+    dmc: Dmc,
 }
 
 impl Savable for Apu {
@@ -215,59 +229,57 @@ impl Apu {
     }
     fn read_status(&self) -> u8 {
         // TODO - Clear the frame interrupt flag
-        return
-            (self.pulse1.is_enabled()   as u8) << 0 |
-            (self.pulse2.is_enabled()   as u8) << 1 |
-            (self.triangle.is_enabled() as u8) << 2 |
-            (self.noise.is_enabled()    as u8) << 3 |
-            (self.dmc.is_enabled()      as u8) << 4
-            ;
-
+        return (self.pulse1.is_enabled() as u8) << 0
+            | (self.pulse2.is_enabled() as u8) << 1
+            | (self.triangle.is_enabled() as u8) << 2
+            | (self.noise.is_enabled() as u8) << 3
+            | (self.dmc.is_enabled() as u8) << 4;
     }
-    fn write_status(&mut self, v:u8) {
-        let enable_pulse1   = v & 0b00001;
-        let enable_pulse2   = v & 0b00010;
+    fn write_status(&mut self, v: u8) {
+        let enable_pulse1 = v & 0b00001;
+        let enable_pulse2 = v & 0b00010;
         let enable_triangle = v & 0b00100;
-        let enable_noise    = v & 0b01000;
-        let enable_dmc      = v & 0b10000;
-        self.pulse1.set_enabled(enable_pulse1>0);
-        self.pulse2.set_enabled(enable_pulse2>0);
-        self.triangle.set_enabled(enable_triangle>0);
-        self.noise.set_enabled(enable_noise>0);
-        self.dmc.set_enabled(enable_dmc>0);
+        let enable_noise = v & 0b01000;
+        let enable_dmc = v & 0b10000;
+        self.pulse1.set_enabled(enable_pulse1 > 0);
+        self.pulse2.set_enabled(enable_pulse2 > 0);
+        self.triangle.set_enabled(enable_triangle > 0);
+        self.noise.set_enabled(enable_noise > 0);
+        self.dmc.set_enabled(enable_dmc > 0);
     }
 }
 
 impl AddressSpace for Apu {
-    fn peek(&self, ptr:u16) -> u8 {
+    fn peek(&self, ptr: u16) -> u8 {
         match map_apu_port(ptr) {
             Some(SND_CHN) => self.read_status(),
-            _ => { //eprintln!("DEBUG - APU READ - {:x}", ptr);
-                   return 0; }
-
+            _ => {
+                //eprintln!("DEBUG - APU READ - {:x}", ptr);
+                return 0;
+            }
         }
     }
-    fn poke(&mut self, ptr:u16, v:u8) {
+    fn poke(&mut self, ptr: u16, v: u8) {
         // eprintln!("DEBUG - APU WRITE - {:x} {:x}", ptr, v);
         match map_apu_port(ptr) {
-            Some(SQ1_VOL) => { self.pulse1.set_volume(v) },
-            Some(SQ1_SWEEP) => { self.pulse1.set_sweep(v) },
-            Some(SQ1_LO) => { self.pulse1.set_timer_low(v) },
-            Some(SQ1_HI) => { self.pulse1.set_timer_high(v) },
-            Some(SQ2_VOL) => { self.pulse2.set_volume(v) },
-            Some(SQ2_SWEEP) => { self.pulse2.set_sweep(v) },
-            Some(SQ2_LO) => { self.pulse2.set_timer_low(v) },
-            Some(SQ2_HI) => { self.pulse2.set_timer_high(v) },
+            Some(SQ1_VOL) => self.pulse1.set_volume(v),
+            Some(SQ1_SWEEP) => self.pulse1.set_sweep(v),
+            Some(SQ1_LO) => self.pulse1.set_timer_low(v),
+            Some(SQ1_HI) => self.pulse1.set_timer_high(v),
+            Some(SQ2_VOL) => self.pulse2.set_volume(v),
+            Some(SQ2_SWEEP) => self.pulse2.set_sweep(v),
+            Some(SQ2_LO) => self.pulse2.set_timer_low(v),
+            Some(SQ2_HI) => self.pulse2.set_timer_high(v),
             Some(TRI_LINEAR) => self.triangle.write_linear_counter(v),
             Some(TRI_LO) => self.triangle.write_timer_low(v),
             Some(TRI_HI) => self.triangle.write_timer_high(v),
-            Some(NOISE_VOL) => { self.noise.set_volume(v) },
-            Some(NOISE_LO) => { self.noise.set_period(v) },
-            Some(NOISE_HI) => { self.noise.set_length(v) },
-            Some(DMC_FREQ) => { /* TODO */ },
-            Some(DMC_RAW) => { /* TODO */ },
-            Some(DMC_START) => { /* TODO */ },
-            Some(DMC_LEN) => { /* TODO */ },
+            Some(NOISE_VOL) => self.noise.set_volume(v),
+            Some(NOISE_LO) => self.noise.set_period(v),
+            Some(NOISE_HI) => self.noise.set_length(v),
+            Some(DMC_FREQ) => { /* TODO */ }
+            Some(DMC_RAW) => { /* TODO */ }
+            Some(DMC_START) => { /* TODO */ }
+            Some(DMC_LEN) => { /* TODO */ }
             Some(SND_CHN) => self.write_status(v),
             Some(FRAME_COUNTER) => self.frame_counter.write_control(v),
             None => panic!("Unexpected APU port {:x} {:x}", ptr, v),
@@ -276,9 +288,9 @@ impl AddressSpace for Apu {
 }
 
 struct LengthCounter {
-    enabled:bool,
-    halt:bool,
-    counter:u8, // 5-bit value
+    enabled: bool,
+    halt: bool,
+    counter: u8, // 5-bit value
 }
 
 impl Clocked for LengthCounter {
@@ -291,9 +303,10 @@ impl Clocked for LengthCounter {
     }
 }
 
-const LENGTH_COUNTER_LOOKUP_TABLE:[u8;32] =
-    [/*00-0F*/ 10,254, 20,  2, 40,  4, 80,  6, 160,  8, 60, 10, 14, 12, 26, 14,
-     /*10-1F*/ 12, 16, 24, 18, 48, 20, 96, 22, 192, 24, 72, 26, 16, 28, 32, 30, ];
+const LENGTH_COUNTER_LOOKUP_TABLE: [u8; 32] = [
+    /*00-0F*/ 10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14, /*10-1F*/ 12,
+    16, 24, 18, 48, 20, 96, 22, 192, 24, 72, 26, 16, 28, 32, 30,
+];
 
 // https://wiki.nesdev.com/w/index.php/APU_Length_Counter
 impl LengthCounter {
@@ -307,17 +320,19 @@ impl LengthCounter {
     pub fn is_silenced(&self) -> bool {
         return self.counter == 0 || !self.enabled;
     }
-    pub fn is_enabled(&self) -> bool { self.enabled }
-    pub fn set_enabled(&mut self, x:bool) {
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+    pub fn set_enabled(&mut self, x: bool) {
         if !x {
             self.counter = 0;
         }
         self.enabled = x;
     }
-    pub fn set_halt(&mut self, x:bool) {
+    pub fn set_halt(&mut self, x: bool) {
         self.halt = x;
     }
-    pub fn set_load(&mut self, x:u8) {
+    pub fn set_load(&mut self, x: u8) {
         if self.enabled {
             self.counter = LENGTH_COUNTER_LOOKUP_TABLE[x as usize & 0x1F];
         }
@@ -325,10 +340,10 @@ impl LengthCounter {
 }
 
 struct LinearCounter {
-    counter:u8,
-    reload_value:u8,
-    reload:bool,
-    enabled:bool,
+    counter: u8,
+    reload_value: u8,
+    reload: bool,
+    enabled: bool,
 }
 
 // https://wiki.nesdev.com/w/index.php/APU_Triangle
@@ -341,10 +356,10 @@ impl LinearCounter {
             enabled: false,
         }
     }
-    pub fn set_reload_value(&mut self, value:u8) {
+    pub fn set_reload_value(&mut self, value: u8) {
         self.reload_value = value;
     }
-    pub fn set_reload_flag(&mut self, value:bool) {
+    pub fn set_reload_flag(&mut self, value: bool) {
         self.reload = value;
     }
     pub fn is_silenced(&self) -> bool {
@@ -374,9 +389,9 @@ impl Clocked for LinearCounter {
 }
 
 struct Triangle {
-    timer_period:u16,
-    timer:u16,
-    sequencer_step:u8,
+    timer_period: u16,
+    timer: u16,
+    sequencer_step: u8,
     length_counter: LengthCounter,
     linear_counter: LinearCounter,
 }
@@ -386,7 +401,7 @@ impl Clocked for Triangle {
         if self.timer == 0 {
             //eprintln!("DEBUG - TRIANGLE STEP {} {}", self.sequencer_step, self.timer_period);
             self.timer = self.timer_period;
-            if ! self.is_silenced() {
+            if !self.is_silenced() {
                 self.sequencer_step += 1;
                 self.sequencer_step &= 0x1F;
             }
@@ -407,29 +422,30 @@ impl Triangle {
         }
     }
     fn is_silenced(&self) -> bool {
-        self.length_counter.is_silenced() ||
-            self.linear_counter.is_silenced()
+        self.length_counter.is_silenced() || self.linear_counter.is_silenced()
     }
-    pub fn is_enabled(&self) -> bool { self.length_counter.is_enabled() }
-    pub fn set_enabled(&mut self, x:bool) {
+    pub fn is_enabled(&self) -> bool {
+        self.length_counter.is_enabled()
+    }
+    pub fn set_enabled(&mut self, x: bool) {
         self.length_counter.set_enabled(x);
         self.linear_counter.set_enabled(x);
     }
-    pub fn write_enabled(&mut self, x:bool) {
+    pub fn write_enabled(&mut self, x: bool) {
         self.length_counter.set_enabled(x);
     }
-    pub fn write_linear_counter(&mut self, x:u8) {
+    pub fn write_linear_counter(&mut self, x: u8) {
         //eprintln!("DEBUG - WRITE LINEAR COUNTER {}", x);
-        let flag = (x & 0x80)>0;
+        let flag = (x & 0x80) > 0;
         self.length_counter.set_halt(flag);
         self.linear_counter.set_reload_flag(flag);
         self.linear_counter.set_reload_value(x & 0x7f);
     }
-    pub fn write_timer_low(&mut self, x:u8) {
+    pub fn write_timer_low(&mut self, x: u8) {
         self.timer_period &= 0xFF00;
         self.timer_period |= x as u16;
     }
-    pub fn write_timer_high(&mut self, x:u8) {
+    pub fn write_timer_high(&mut self, x: u8) {
         //eprintln!("DEBUG - WRITE TIMER HIGH {}", x);
         self.timer_period &= 0x00FF;
         self.timer_period |= (x as u16 & 0x7) << 8;
@@ -438,11 +454,7 @@ impl Triangle {
     }
     pub fn sample(&self) -> f64 {
         let step = self.sequencer_step;
-        return if step < 16 {
-            15-step
-        } else {
-            step - 16
-        } as f64;
+        return if step < 16 { 15 - step } else { step - 16 } as f64;
     }
     pub fn clock_half_frame(&mut self) {
         self.length_counter.clock();
@@ -454,12 +466,12 @@ impl Triangle {
 
 // https://wiki.nesdev.com/w/index.php/APU_Sweep
 struct Sweep {
-    negation:bool, // false=one's complement; true = two's complement
-    enabled:bool,
-    divider_period:u8,
-    divider:u8,
-    negate:bool,
-    shift_count:u8,
+    negation: bool, // false=one's complement; true = two's complement
+    enabled: bool,
+    divider_period: u8,
+    divider: u8,
+    negate: bool,
+    shift_count: u8,
     reload: bool,
     period: u16,
     timer: u16, // A copy of the timer on the unit
@@ -480,12 +492,9 @@ impl Clocked for Sweep {
         //           self.period,
         //           self.timer);
 
-        if self.divider == 0 &&
-            self.enabled &&
-            ! self.is_muted() &&
-            self.shift_count != 0 {
-                self.period = self.target_period();
-            }
+        if self.divider == 0 && self.enabled && !self.is_muted() && self.shift_count != 0 {
+            self.period = self.target_period();
+        }
         if self.divider == 0 || self.reload {
             self.divider = self.divider_period;
             self.reload = false;
@@ -496,7 +505,7 @@ impl Clocked for Sweep {
 }
 
 impl Sweep {
-    pub fn new(negation:bool) -> Sweep {
+    pub fn new(negation: bool) -> Sweep {
         Sweep {
             negation: negation,
             enabled: false,
@@ -509,18 +518,17 @@ impl Sweep {
             timer: 0,
         }
     }
-    pub fn set_period(&mut self, period:u16) {
+    pub fn set_period(&mut self, period: u16) {
         self.period = period;
     }
     pub fn is_muted(&self) -> bool {
-        return self.period < 8 ||
-            self.target_period() > 0x7ff;
+        return self.period < 8 || self.target_period() > 0x7ff;
     }
-    pub fn write_control(&mut self, x:u8) {
+    pub fn write_control(&mut self, x: u8) {
         self.shift_count = x & 0x7;
-        self.negate = get_bit(x,3)>0;
+        self.negate = get_bit(x, 3) > 0;
         self.divider_period = (x >> 4) & 0x7;
-        self.enabled = get_bit(x,7)>0;
+        self.enabled = get_bit(x, 7) > 0;
     }
     pub fn period(&self) -> u16 {
         return self.period;
@@ -535,7 +543,7 @@ impl Sweep {
         return period.wrapping_add(change);
     }
 
-    fn negate(&self, value:u16) -> u16 {
+    fn negate(&self, value: u16) -> u16 {
         if self.negation {
             (-(value as i16)) as u16
         } else {
@@ -545,12 +553,12 @@ impl Sweep {
 }
 
 struct Envelope {
-    looping:bool,
-    constant:bool,
-    period:u8,
-    divider:u8,
-    volume:u8,
-    start:bool,
+    looping: bool,
+    constant: bool,
+    period: u8,
+    divider: u8,
+    volume: u8,
+    start: bool,
 }
 
 impl Clocked for Envelope {
@@ -586,11 +594,11 @@ impl Envelope {
             start: false,
         }
     }
-    pub fn set_control(&mut self, v:u8) {
+    pub fn set_control(&mut self, v: u8) {
         self.period = v & 0xf;
         self.volume = v & 0xf;
-        self.constant = get_bit(v,4)>0;
-        self.looping = get_bit(v,5)>0;
+        self.constant = get_bit(v, 4) > 0;
+        self.looping = get_bit(v, 5) > 0;
     }
 
     pub fn sample(&self) -> f64 {
@@ -606,24 +614,19 @@ impl Envelope {
 }
 
 struct Pulse {
-    pub sweep:Sweep,
-    timer_period:u16,
-    timer:u16,
-    duty_cycle:u8,
-    sequencer_step:u8,
-    envelope:Envelope,
-    length_counter:LengthCounter,
+    pub sweep: Sweep,
+    timer_period: u16,
+    timer: u16,
+    duty_cycle: u8,
+    sequencer_step: u8,
+    envelope: Envelope,
+    length_counter: LengthCounter,
 }
 
-const PULSE_SEQUENCER_DUTY_TABLE:[u8;4] =
-    [ 0b01000000,
-      0b01100000,
-      0b01111000,
-      0b10011111,
-    ];
+const PULSE_SEQUENCER_DUTY_TABLE: [u8; 4] = [0b01000000, 0b01100000, 0b01111000, 0b10011111];
 
 impl Pulse {
-    pub fn new(negation:bool) -> Pulse {
+    pub fn new(negation: bool) -> Pulse {
         Pulse {
             sweep: Sweep::new(negation),
             timer_period: 0,
@@ -634,25 +637,25 @@ impl Pulse {
             length_counter: LengthCounter::new(),
         }
     }
-    pub fn set_volume(&mut self, v:u8) {
+    pub fn set_volume(&mut self, v: u8) {
         self.envelope.set_control(v);
-        self.length_counter.set_halt(get_bit(v,5)>0);
+        self.length_counter.set_halt(get_bit(v, 5) > 0);
         self.duty_cycle = v >> 6;
     }
-    pub fn set_sweep(&mut self, v:u8) {
+    pub fn set_sweep(&mut self, v: u8) {
         self.sweep.write_control(v);
     }
-    pub fn set_timer_low(&mut self, v:u8) {
+    pub fn set_timer_low(&mut self, v: u8) {
         self.timer_period &= 0xFF00;
         self.timer_period |= v as u16;
         let period = self.timer_period;
         self.sweep.set_period(period);
     }
-    pub fn set_timer_high(&mut self, v:u8) {
+    pub fn set_timer_high(&mut self, v: u8) {
         //eprintln!("DEBUG - PULSE TIMER HIGH {} {} {}", 0x
         self.timer_period &= 0x00FF;
         self.timer_period |= ((v & 0x7) as u16) << 8;
-        self.length_counter.set_load(v>>3);
+        self.length_counter.set_load(v >> 3);
         self.sequencer_step = 0;
         self.envelope.reset();
         let period = self.timer_period;
@@ -669,20 +672,19 @@ impl Pulse {
         //           self.length_counter.is_silenced(),
         //           self.sequencer(),
         //           self.envelope.sample());
-        if ! self.is_muted() {
+        if !self.is_muted() {
             return self.sequencer() * self.envelope.sample();
         } else {
             return 0.0;
         }
     }
     fn is_muted(&self) -> bool {
-        self.sweep.is_muted() ||
-            self.length_counter.is_silenced()
+        self.sweep.is_muted() || self.length_counter.is_silenced()
     }
     fn is_enabled(&self) -> bool {
         self.length_counter.is_enabled()
     }
-    fn set_enabled(&mut self, v:bool) {
+    fn set_enabled(&mut self, v: bool) {
         self.length_counter.set_enabled(v);
     }
     fn clock_quarter_frame(&mut self) {
@@ -708,15 +710,17 @@ impl Clocked for Pulse {
     }
 }
 
-const NOISE_PERIOD_LOOKUP_TABLE:[u16;16] = [4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068 ];
+const NOISE_PERIOD_LOOKUP_TABLE: [u16; 16] = [
+    4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068,
+];
 
 struct Noise {
-    envelope:Envelope,
-    length_counter:LengthCounter,
+    envelope: Envelope,
+    length_counter: LengthCounter,
     mode: bool,
-    period:u16,
-    feedback:u16,
-    timer:u16,
+    period: u16,
+    feedback: u16,
+    timer: u16,
 }
 
 impl Clocked for Noise {
@@ -744,53 +748,48 @@ impl Noise {
         }
     }
     fn sample(&self) -> f64 {
-        if get_bit(self.feedback as u8,0)>0 &&
-            ! self.length_counter.is_silenced() {
-                self.envelope.sample()
-            } else {
-                0.0
-            }
+        if get_bit(self.feedback as u8, 0) > 0 && !self.length_counter.is_silenced() {
+            self.envelope.sample()
+        } else {
+            0.0
+        }
     }
     fn is_enabled(&self) -> bool {
         self.length_counter.is_enabled()
     }
-    pub fn set_volume(&mut self, v:u8) {
-        self.length_counter.set_halt(get_bit(v, 5)>0);
+    pub fn set_volume(&mut self, v: u8) {
+        self.length_counter.set_halt(get_bit(v, 5) > 0);
         self.envelope.set_control(v);
     }
-    pub fn set_enabled(&mut self, v:bool) {
+    pub fn set_enabled(&mut self, v: bool) {
         self.length_counter.set_enabled(v);
     }
-    pub fn set_period(&mut self, v:u8) {
-        self.mode = (v&0x8)>0;
-        self.period = NOISE_PERIOD_LOOKUP_TABLE[(v&0xf) as usize];
+    pub fn set_period(&mut self, v: u8) {
+        self.mode = (v & 0x8) > 0;
+        self.period = NOISE_PERIOD_LOOKUP_TABLE[(v & 0xf) as usize];
     }
-    pub fn set_length(&mut self, v:u8) {
+    pub fn set_length(&mut self, v: u8) {
         self.length_counter.set_load(v >> 3);
         self.envelope.reset();
     }
-    fn next_feedback(&self, mut feedback:u16) -> u16 {
-        let new_bit =
-            (get_bit(feedback as u8, 0)>0) ^
-            (get_bit(feedback as u8, ternary(self.mode, 6, 1))>0);
+    fn next_feedback(&self, mut feedback: u16) -> u16 {
+        let new_bit = (get_bit(feedback as u8, 0) > 0)
+            ^ (get_bit(feedback as u8, ternary(self.mode, 6, 1)) > 0);
         feedback >>= 1;
         feedback |= ternary(new_bit, 1 << 14, 0);
         return feedback;
     }
-    pub fn clock_quarter_frame(&mut self) {
-    }
+    pub fn clock_quarter_frame(&mut self) {}
     pub fn clock_half_frame(&mut self) {
         self.length_counter.clock();
     }
 }
 
-
-struct Dmc {
-}
+struct Dmc {}
 
 impl Dmc {
     pub fn new() -> Dmc {
-        Dmc { }
+        Dmc {}
     }
     pub fn sample(&self) -> f64 {
         return 0.0;
@@ -799,7 +798,7 @@ impl Dmc {
         // TODO
         false
     }
-    pub fn set_enabled(&mut self, v:bool) {
+    pub fn set_enabled(&mut self, v: bool) {
         // TODO
     }
     pub fn clock_half_frame(&mut self) {

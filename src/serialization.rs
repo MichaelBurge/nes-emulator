@@ -1,10 +1,10 @@
 #![allow(unused_must_use)] // TODO
 #![allow(dead_code)]
 
+use std::default::Default;
 use std::fs::File;
 use std::io::Read;
 use std::io::Write;
-use std::default::Default;
 
 pub trait Savable {
     fn save(&self, fh: &mut dyn Write);
@@ -19,7 +19,7 @@ impl Savable for bool {
     fn load(&mut self, fh: &mut dyn Read) {
         let mut bytes = [0];
         fh.read_exact(&mut bytes);
-        *self = bytes[0]>0;
+        *self = bytes[0] > 0;
     }
 }
 
@@ -40,7 +40,7 @@ impl Savable for u16 {
         let bytes = [(*self & 0xff) as u8, ((*self >> 8) & 0xff) as u8];
         fh.write_all(&bytes);
     }
-    fn load(&mut self, fh:&mut dyn Read) {
+    fn load(&mut self, fh: &mut dyn Read) {
         let mut bytes = [0; 2];
         fh.read_exact(&mut bytes);
         *self = 0;
@@ -52,8 +52,8 @@ impl Savable for u16 {
 impl Savable for u32 {
     fn save(&self, fh: &mut dyn Write) {
         let bytes = [
-            ((*self >> 0 ) & 0xff) as u8,
-            ((*self >> 8 ) & 0xff) as u8,
+            ((*self >> 0) & 0xff) as u8,
+            ((*self >> 8) & 0xff) as u8,
             ((*self >> 16) & 0xff) as u8,
             ((*self >> 24) & 0xff) as u8,
         ];
@@ -73,8 +73,8 @@ impl Savable for u32 {
 impl Savable for u64 {
     fn save(&self, fh: &mut dyn Write) {
         let bytes = [
-            ((*self >> 0 ) & 0xff) as u8,
-            ((*self >> 8 ) & 0xff) as u8,
+            ((*self >> 0) & 0xff) as u8,
+            ((*self >> 8) & 0xff) as u8,
             ((*self >> 16) & 0xff) as u8,
             ((*self >> 24) & 0xff) as u8,
             ((*self >> 32) & 0xff) as u8,
@@ -104,7 +104,7 @@ impl Savable for usize {
         (*self as u64).save(fh);
     }
     fn load(&mut self, fh: &mut dyn Read) {
-        let mut x:u64 = *self as u64;
+        let mut x: u64 = *self as u64;
         x.load(fh);
         *self = x as usize;
     }
@@ -112,7 +112,7 @@ impl Savable for usize {
 
 impl<T: Savable> Savable for [T] {
     fn save(&self, fh: &mut dyn Write) {
-        let len:usize = self.len();
+        let len: usize = self.len();
         len.save(fh);
         for i in self.iter() {
             i.save(fh);
@@ -129,7 +129,7 @@ impl<T: Savable> Savable for [T] {
 
 impl<T: Savable + Default> Savable for Vec<T> {
     fn save(&self, fh: &mut dyn Write) {
-        let len:usize = self.len();
+        let len: usize = self.len();
         len.save(fh);
         for i in self.iter() {
             i.save(fh);
@@ -141,7 +141,7 @@ impl<T: Savable + Default> Savable for Vec<T> {
         self.truncate(0);
         self.reserve(len);
         for _ in 0..len {
-            let mut x:T = Default::default();
+            let mut x: T = Default::default();
             x.load(fh);
             self.push(x);
         }
@@ -149,13 +149,13 @@ impl<T: Savable + Default> Savable for Vec<T> {
 }
 
 pub fn read_value<T: Default + Savable>(fh: &mut dyn Read) -> T {
-    let mut t:T = Default::default();
+    let mut t: T = Default::default();
     t.load(fh);
     t
 }
 
-use std::io::SeekFrom;
 use std::io::Seek;
+use std::io::SeekFrom;
 
 pub fn file_position(fh: &mut File) -> u64 {
     fh.seek(SeekFrom::Current(0)).unwrap()

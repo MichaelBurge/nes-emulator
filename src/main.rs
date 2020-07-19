@@ -1,68 +1,64 @@
 #![allow(dead_code)]
 #![allow(unused_mut)]
 
-mod common;
-mod c6502;
-mod ppu;
 mod apu;
+mod c6502;
+mod common;
+mod joystick;
 mod mapper;
 mod nes;
-mod joystick;
+mod ppu;
 mod serialization;
 
 extern crate sdl2;
 
-use sdl2::audio::{AudioCallback,AudioSpecDesired,AudioQueue};
+use sdl2::audio::{AudioCallback, AudioQueue, AudioSpecDesired};
 use sdl2::controller::GameController;
-use sdl2::pixels::PixelFormatEnum;
-use sdl2::pixels::Color;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
+use sdl2::pixels::Color;
+use sdl2::pixels::PixelFormatEnum;
 use sdl2::render::Canvas;
 use sdl2::render::Texture;
 use sdl2::render::TextureAccess;
 use sdl2::render::TextureCreator;
 use sdl2::video::Window;
 use sdl2::video::WindowContext;
-use sdl2::EventPump;
 use sdl2::AudioSubsystem;
-use sdl2::VideoSubsystem;
+use sdl2::EventPump;
 use sdl2::GameControllerSubsystem;
-use std::ptr::NonNull;
-use std::time::{Duration,Instant};
+use sdl2::VideoSubsystem;
 use std::fs::File;
-use std::os::raw::c_int;
 use std::io::ErrorKind;
+use std::os::raw::c_int;
+use std::ptr::NonNull;
+use std::time::{Duration, Instant};
 
 use core::ptr::null_mut;
 
+use crate::apu::Apu;
 use crate::joystick::Joystick;
 use crate::mapper::AddressSpace;
 use crate::nes::Nes;
 use crate::nes::Tas;
 use crate::nes::{load_ines, read_ines};
 use crate::ppu::*;
-use crate::apu::Apu;
-use crate::serialization::{Savable};
+use crate::serialization::Savable;
 
-extern {
-    fn emscripten_set_main_loop(
-        m: extern fn(),
-        fps: c_int,
-        infinite: c_int,
-    );
+extern "C" {
+    fn emscripten_set_main_loop(m: extern "C" fn(), fps: c_int, infinite: c_int);
 }
 
 // https://wiki.nesdev.com/w/index.php/Cycle_reference_chart
-const CLOCKS_PER_FRAME:u32 = 29780;
-const APU_FREQUENCY:i32 = 240;
-const AUDIO_FREQUENCY:usize = 44100;
-const SAMPLES_PER_FRAME:usize = 1024;
-const SCALE:usize = 4;
-const RECORDING:bool = true;
-const ROM_BEGIN_SAVESTATE:&'static str= "initial.state";
-const DEFAULT_SAVESTATE:&'static str = "save.state";
-const DEFAULT_RECORDING:&'static str = "save.video";
+const CLOCKS_PER_FRAME: u32 = 29780;
+const APU_FREQUENCY: i32 = 240;
+const AUDIO_FREQUENCY: usize = 44100;
+const SAMPLES_PER_FRAME: usize = 1024;
+const SCALE: usize = 4;
+const RECORDING: bool = true;
+const ROM_BEGIN_SAVESTATE: &'static str = "initial.state";
+const DEFAULT_SAVESTATE: &'static str = "save.state";
+const DEFAULT_RECORDING: &'static str = "save.video";
 
 struct GlobalState {
     sdl_context: *mut sdl2::Sdl,
@@ -83,10 +79,10 @@ struct GlobalState {
     turbo_mode: bool,
 }
 
-static mut GLOBAL_STATE:Option<GlobalState> = None;
-static mut TEXTURE_CREATOR:Option<TextureCreator<WindowContext>> = None;
+static mut GLOBAL_STATE: Option<GlobalState> = None;
+static mut TEXTURE_CREATOR: Option<TextureCreator<WindowContext>> = None;
 fn main() {
-    let mut sdl_context  = Box::new(sdl2::init().unwrap());
+    let mut sdl_context = Box::new(sdl2::init().unwrap());
     let mut video_subsystem = Box::new(sdl_context.video().unwrap());
     let mut controller_subsystem = Box::new(sdl_context.game_controller().unwrap());
     let mut audio_subsystem = Box::new(sdl_context.audio().unwrap());
@@ -94,7 +90,12 @@ fn main() {
     let mut joystick2 = Box::new(Joystick::new());
     let joystick1_ptr = (&mut *joystick1) as *mut Joystick;
     let joystick2_ptr = (&mut *joystick2) as *mut Joystick;
-    let window = video_subsystem.window("NES emulator", (RENDER_WIDTH*SCALE) as u32, (RENDER_HEIGHT*SCALE) as u32)
+    let window = video_subsystem
+        .window(
+            "NES emulator",
+            (RENDER_WIDTH * SCALE) as u32,
+            (RENDER_HEIGHT * SCALE) as u32,
+        )
         .position_centered()
         .build()
         .unwrap();
@@ -102,12 +103,14 @@ fn main() {
     let mut canvas = Box::new(window.into_canvas().build().unwrap());
     let texture_creator = canvas.texture_creator();
     let mut texture = {
-        let mut tex = texture_creator.create_texture(
+        let mut tex = texture_creator
+            .create_texture(
                 PixelFormatEnum::RGB24,
                 TextureAccess::Streaming,
                 RENDER_WIDTH as u32,
-                RENDER_HEIGHT as u32
-            ).unwrap();
+                RENDER_HEIGHT as u32,
+            )
+            .unwrap();
         unsafe { Box::new(std::mem::transmute(tex)) }
     };
     let mut nes = Box::new(create_nes(joystick1, joystick2));
@@ -117,8 +120,8 @@ fn main() {
             if let Ok(mut fh) = File::create(ROM_BEGIN_SAVESTATE) {
                 nes.save(&mut fh);
             }
-        },
-        Err(e) => { eprintln!("DEBUG - Unhandled file error - {:?}", e) },
+        }
+        Err(e) => eprintln!("DEBUG - Unhandled file error - {:?}", e),
     }
     let desired_spec = AudioSpecDesired {
         freq: Some(AUDIO_FREQUENCY as i32),
@@ -145,30 +148,30 @@ fn main() {
     audio_device.resume();
     let mut event_pump = Box::new(sdl_context.event_pump().unwrap());
     unsafe {
-    GLOBAL_STATE = Some(GlobalState {
-        sdl_context: &mut *sdl_context,
-        joystick1: joystick1_ptr,
-        joystick2: joystick2_ptr,
-        video_subsystem: &mut *video_subsystem,
-        audio_subsystem: &mut *audio_subsystem,
-        controller_subsystem: &mut *controller_subsystem,
-        canvas: &mut *canvas,
-        event_pump: &mut *event_pump,
-        nes: &mut *nes,
-        audio_device: &mut *audio_device,
-        texture: &mut *texture,
-        sdl_controller1: null_mut(),
-        sdl_controller2: null_mut(),
-        tas: &mut *tas,
-        tas_frame: 0,
-        turbo_mode: false,
-    });
+        GLOBAL_STATE = Some(GlobalState {
+            sdl_context: &mut *sdl_context,
+            joystick1: joystick1_ptr,
+            joystick2: joystick2_ptr,
+            video_subsystem: &mut *video_subsystem,
+            audio_subsystem: &mut *audio_subsystem,
+            controller_subsystem: &mut *controller_subsystem,
+            canvas: &mut *canvas,
+            event_pump: &mut *event_pump,
+            nes: &mut *nes,
+            audio_device: &mut *audio_device,
+            texture: &mut *texture,
+            sdl_controller1: null_mut(),
+            sdl_controller2: null_mut(),
+            tas: &mut *tas,
+            tas_frame: 0,
+            turbo_mode: false,
+        });
     }
 
     if cfg!(target_os = "emscripten") {
         // void emscripten_set_main_loop(em_callback_func func, int fps, int simulate_infinite_loop);
         unsafe { emscripten_set_main_loop(main_loop, 60, 1) };
-        loop { }
+        loop {}
     } else {
         let mut every_second = Instant::now();
         let mut num_frames = 0;
@@ -178,7 +181,12 @@ fn main() {
             let after = Instant::now();
             num_frames += 1;
             if after - every_second >= Duration::from_millis(1000) {
-                eprintln!("DEBUG - FPS - {} {:?} {:?}", num_frames, after - every_second, after - now);
+                eprintln!(
+                    "DEBUG - FPS - {} {:?} {:?}",
+                    num_frames,
+                    after - every_second,
+                    after - now
+                );
                 num_frames = 0;
                 every_second = after;
             }
@@ -188,12 +196,12 @@ fn main() {
     //std::unreachable!();
 }
 
-extern fn main_loop() {
+extern "C" fn main_loop() {
     let now = Instant::now();
     let st = unsafe { GLOBAL_STATE.as_mut().unwrap() };
     // let mut sdl_context = unsafe { &mut *st.sdl_context };
-    let joystick1:&mut Joystick = unsafe { &mut *st.joystick1 };
-    let joystick2:&mut Joystick = unsafe { &mut *st.joystick2 };
+    let joystick1: &mut Joystick = unsafe { &mut *st.joystick1 };
+    let joystick2: &mut Joystick = unsafe { &mut *st.joystick2 };
     let mut nes = unsafe { &mut *st.nes };
     let mut event_pump = unsafe { &mut *st.event_pump };
     let mut audio_device = unsafe { &mut *st.audio_device };
@@ -216,58 +224,84 @@ extern fn main_loop() {
     for event in event_pump.poll_iter() {
         match event {
             // Exit game
-            Event::Quit {..} |
-            Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
+            Event::Quit { .. }
+            | Event::KeyDown {
+                keycode: Some(Keycode::Escape),
+                ..
+            } => {
                 std::process::exit(0);
-            },
+            }
             // Break CPU debugger
-            Event::KeyDown { keycode: Some(Keycode::Pause), .. } => {
+            Event::KeyDown {
+                keycode: Some(Keycode::Pause),
+                ..
+            } => {
                 nes.break_debugger();
-            },
+            }
             // Save state
-            Event::KeyDown { keycode: Some(Keycode::F5), .. } => {
+            Event::KeyDown {
+                keycode: Some(Keycode::F5),
+                ..
+            } => {
                 let mut file = File::create(DEFAULT_SAVESTATE).unwrap();
                 nes.save(&mut file);
                 let mut tas_file = File::create(DEFAULT_RECORDING).unwrap();
                 tas.save(&mut tas_file);
-            },
+            }
             // Load State
-            Event::KeyDown { keycode: Some(Keycode::F6), .. } => {
+            Event::KeyDown {
+                keycode: Some(Keycode::F6),
+                ..
+            } => {
                 let mut file = File::open(DEFAULT_SAVESTATE).unwrap();
                 nes.load(&mut file);
                 let mut tas_file = File::open(DEFAULT_RECORDING).unwrap();
                 tas.load(&mut tas_file);
-            },
+            }
             // Play recording from initial state
-            Event::KeyDown { keycode: Some(Keycode::F7), .. } => {
+            Event::KeyDown {
+                keycode: Some(Keycode::F7),
+                ..
+            } => {
                 let mut tas_fh = File::open(DEFAULT_RECORDING).unwrap();
                 tas.load(&mut tas_fh);
                 let mut ss_fh = File::open(ROM_BEGIN_SAVESTATE).unwrap();
                 nes.load(&mut ss_fh);
                 st.tas_frame = 0;
                 nes.cpu.poke(0x075a, 3);
-            },
+            }
             // Begin recording at current point
-            Event::KeyDown { keycode: Some(Keycode::F8), .. } => {
+            Event::KeyDown {
+                keycode: Some(Keycode::F8),
+                ..
+            } => {
                 let mut ss_fh = File::create(ROM_BEGIN_SAVESTATE).unwrap();
                 nes.save(&mut ss_fh);
                 *tas = Tas::new();
                 st.tas_frame = 0;
-            },
+            }
             // Attach controller
             Event::ControllerDeviceAdded { which: id, .. } => {
                 eprintln!("DEBUG - CONTROLLER ADDED - {}", id);
                 match id {
-                    0 => st.sdl_controller1 = Box::leak(Box::new(controller_subsystem.open(id).unwrap())),
-                    1 => st.sdl_controller2 = Box::leak(Box::new(controller_subsystem.open(id).unwrap())),
+                    0 => {
+                        st.sdl_controller1 =
+                            Box::leak(Box::new(controller_subsystem.open(id).unwrap()))
+                    }
+                    1 => {
+                        st.sdl_controller2 =
+                            Box::leak(Box::new(controller_subsystem.open(id).unwrap()))
+                    }
                     _ => eprintln!("DEBUG - UNEXPECTED CONTROLLER ID {}", id),
                 }
-
-            },
+            }
             // Toggle Turbo Mode
-            Event::KeyDown { keycode: Some(Keycode::Tab), .. } => {
-                st.turbo_mode = ! st.turbo_mode;
-            },
+            Event::KeyDown {
+                keycode: Some(Keycode::Tab),
+                ..
+            } => {
+                st.turbo_mode = !st.turbo_mode;
+            }
             _ => {}
         }
     }
@@ -294,10 +328,10 @@ extern fn main_loop() {
     let target_millis = Duration::from_millis(1000 / 60);
     let sleep_millis = target_millis.checked_sub(after - now);
     match sleep_millis {
-        None => {}, // Took too long last frame
+        None => {} // Took too long last frame
         Some(sleep_millis) => {
             //eprintln!("DEBUG - SLEEP - {:?}", sleep_millis);
-            if ! st.turbo_mode {
+            if !st.turbo_mode {
                 ::std::thread::sleep(sleep_millis);
             }
         }
@@ -305,22 +339,22 @@ extern fn main_loop() {
 }
 
 struct ApuSampler {
-    apu:NonNull<Box<Apu>>,
-    volume:f32,
-    resample_step:u32,
-    sample:f32,
-    last_sample:f32,
-    last_time:Instant,
+    apu: NonNull<Box<Apu>>,
+    volume: f32,
+    resample_step: u32,
+    sample: f32,
+    last_sample: f32,
+    last_time: Instant,
 }
 
-unsafe impl std::marker::Send for ApuSampler { }
+unsafe impl std::marker::Send for ApuSampler {}
 
-const SAMPLES_PER_SECOND:u32 = 1789920;
-const CLOCK_FREQUENCY:u32 = 30000;
-const SAMPLES_PER_CLOCK:u32 = SAMPLES_PER_SECOND / CLOCK_FREQUENCY;
+const SAMPLES_PER_SECOND: u32 = 1789920;
+const CLOCK_FREQUENCY: u32 = 30000;
+const SAMPLES_PER_CLOCK: u32 = SAMPLES_PER_SECOND / CLOCK_FREQUENCY;
 
 impl ApuSampler {
-    fn resample(last_sample:&mut f32, samples: &[f32], resamples:&mut [f32]) {
+    fn resample(last_sample: &mut f32, samples: &[f32], resamples: &mut [f32]) {
         let num_samples = samples.len();
         let num_resamples = resamples.len();
 
@@ -348,7 +382,7 @@ impl AudioCallback for ApuSampler {
     type Channel = f32;
 
     fn callback(&mut self, out: &mut [f32]) {
-        let apu:&mut Apu = unsafe { self.apu.as_mut() };
+        let apu: &mut Apu = unsafe { self.apu.as_mut() };
         let new_time = Instant::now();
         // eprintln!("SAMPLES {} {} {:?}", out.len(), apu.samples.len(), (new_time - self.last_time));
         let samples_slice = apu.samples.as_slice();
@@ -360,29 +394,32 @@ impl AudioCallback for ApuSampler {
     }
 }
 
-fn create_nes(joystick1:Box<dyn AddressSpace>, joystick2:Box<dyn AddressSpace>) -> Nes {
+fn create_nes(joystick1: Box<dyn AddressSpace>, joystick2: Box<dyn AddressSpace>) -> Nes {
     //let filename = "roms/donkey_kong.nes";
     let filename = "roms/mario.nes";
     match read_ines(filename.to_string()) {
-        e @ Err {..} => panic!("Unable to load ROM {} {:?}", filename, e),
+        e @ Err { .. } => panic!("Unable to load ROM {} {:?}", filename, e),
         Ok(rom) => load_ines(rom, joystick1, joystick2),
     }
 }
 
 fn present_frame(canvas: &mut Canvas<Window>, texture: &mut Texture, ppu_pixels: &[u8]) {
-    texture.update(None, ppu_pixels, RENDER_WIDTH*3).unwrap();
+    texture.update(None, ppu_pixels, RENDER_WIDTH * 3).unwrap();
     canvas.clear();
     canvas.copy(&texture, None, None).unwrap();
     canvas.present();
 }
 
-fn enqueue_frame_audio(audio:&AudioQueue<f32>, samples:&mut Vec<f32>) {
+fn enqueue_frame_audio(audio: &AudioQueue<f32>, samples: &mut Vec<f32>) {
     let xs = samples.as_slice();
-    let bytes_per_sample:u32 = 8;
-    if audio.size() as usize <= 2*(bytes_per_sample as usize)*SAMPLES_PER_FRAME {
+    let bytes_per_sample: u32 = 8;
+    if audio.size() as usize <= 2 * (bytes_per_sample as usize) * SAMPLES_PER_FRAME {
         audio.queue(&xs);
     } else {
-        eprintln!("DEBUG - SAMPLE OVERFLOW - {}", audio.size() / bytes_per_sample);
+        eprintln!(
+            "DEBUG - SAMPLE OVERFLOW - {}",
+            audio.size() / bytes_per_sample
+        );
     }
     samples.clear();
 }
@@ -390,7 +427,7 @@ fn enqueue_frame_audio(audio:&AudioQueue<f32>, samples:&mut Vec<f32>) {
 struct SquareWave {
     phase_inc: f32,
     phase: f32,
-    volume: f32
+    volume: f32,
 }
 
 impl AudioCallback for SquareWave {
@@ -409,7 +446,7 @@ impl AudioCallback for SquareWave {
     }
 }
 
-fn get_button_bit(controller: *mut GameController, button_id:u8) -> u8 {
+fn get_button_bit(controller: *mut GameController, button_id: u8) -> u8 {
     // Button order: A,B, Select,Start,Up,Down,Left,Right
     let button = match button_id {
         0 => sdl2::controller::Button::A,
@@ -427,11 +464,11 @@ fn get_button_bit(controller: *mut GameController, button_id:u8) -> u8 {
             None => {
                 // eprintln!("DEBUG - ZERO");
                 0
-            },
+            }
             Some(controller) => {
                 //eprintln!("DEBUG - NOT ZERO");
                 controller.button(button) as u8
-            },
+            }
         }
     }
 }

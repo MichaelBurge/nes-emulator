@@ -1,40 +1,39 @@
 #![allow(unused_must_use)]
 #![cfg(unix)]
 
-mod common;
-mod c6502;
-mod ppu;
 mod apu;
+mod c6502;
+mod common;
+mod joystick;
 mod mapper;
 mod nes;
-mod joystick;
+mod ppu;
 mod serialization;
 
 use core::ptr::null_mut;
+use std::fmt::Debug;
+use std::fs::File;
 use std::io::Read;
 use std::io::Write;
-use std::fs::File;
-use std::fmt::Debug;
 use std::os::unix::io::FromRawFd;
 
+use crate::common::Clocked;
 use crate::joystick::Joystick;
 use crate::mapper::AddressSpace;
-use crate::nes::Nes;
 use crate::nes::load_ines;
 use crate::nes::read_ines;
-use crate::serialization::Savable;
+use crate::nes::Nes;
 use crate::serialization::read_value;
-use crate::common::Clocked;
+use crate::serialization::Savable;
 
 fn main() {
     // Standard stdout() object is line-buffered
     let stdin = unsafe { File::from_raw_fd(0) };
     let stdout = unsafe { File::from_raw_fd(1) };
-    let mut headless = Headless::new(
-        Box::new(stdin),
-        Box::new(stdout),
-    );
-    loop { headless.dispatch_command() }
+    let mut headless = Headless::new(Box::new(stdin), Box::new(stdout));
+    loop {
+        headless.dispatch_command()
+    }
 }
 
 struct Headless {
@@ -65,19 +64,19 @@ impl Headless {
     fn dispatch_command(&mut self) {
         let b = self.read_byte();
         match b {
-            0   => panic!("'Abort with error' received. Check for synchronization issues."),
-            1   => self.command_load_rom(),
-            2   => self.command_step_frame(),
-            3   => self.command_render_frame(),
-            4   => self.command_set_inputs(),
-            5   => self.command_save_state(),
-            6   => self.command_load_state(),
-            7   => self.command_get_info(),
-            8   => self.command_step(),
-            9   => self.command_save_tas(),
-            10  => self.command_peek(),
-            11  => self.command_poke(),
-            12  => self.command_set_rendering(),
+            0 => panic!("'Abort with error' received. Check for synchronization issues."),
+            1 => self.command_load_rom(),
+            2 => self.command_step_frame(),
+            3 => self.command_render_frame(),
+            4 => self.command_set_inputs(),
+            5 => self.command_save_state(),
+            6 => self.command_load_state(),
+            7 => self.command_get_info(),
+            8 => self.command_step(),
+            9 => self.command_save_tas(),
+            10 => self.command_peek(),
+            11 => self.command_poke(),
+            12 => self.command_set_rendering(),
             _ => panic!("Unknown command {}", b),
         }
         self.num_commands += 1;
@@ -100,7 +99,7 @@ impl Headless {
                 nes.apu.is_recording = false; // TODO - Expose some way to retrieve recorded sound
                 self.nes = Some(Box::new(nes));
             }
-            x@Err{..} => panic!("Error loading rom file {:?} - {:?}", filename, x),
+            x @ Err { .. } => panic!("Error loading rom file {:?} - {:?}", filename, x),
         }
     }
     fn command_step_frame(&mut self) {
@@ -112,7 +111,7 @@ impl Headless {
     }
     fn command_render_frame(&mut self) {
         let render_style = self.read_byte();
-        let bytes:Vec<u8> = match render_style {
+        let bytes: Vec<u8> = match render_style {
             0 => self.nes.as_ref().unwrap().ppu.display.to_vec(),
             1 => self.nes.as_ref().unwrap().ppu.render().to_vec(),
             _ => panic!("Unknown render style {}", render_style),
@@ -159,7 +158,7 @@ impl Headless {
         self.is_rendering = is_rendering > 0;
     }
 
-    fn read_value<T:Default + Savable + Debug>(&mut self) -> T {
+    fn read_value<T: Default + Savable + Debug>(&mut self) -> T {
         let x = read_value::<T>(&mut self.in_fh);
         x
     }
@@ -167,8 +166,8 @@ impl Headless {
         self.read_value::<u8>()
     }
     fn read_length_string(&mut self) -> String {
-        let len:usize = self.read_value::<u32>() as usize;
-        let mut data:Vec<u8> = vec!(0; len);
+        let len: usize = self.read_value::<u32>() as usize;
+        let mut data: Vec<u8> = vec![0; len];
         for i in 0..len {
             data[i] = self.read_byte();
         }

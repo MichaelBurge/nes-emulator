@@ -2,14 +2,14 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
 
+use crate::c6502::C6502;
 use crate::common::*;
 use crate::mapper::{AddressSpace, Mapper};
-use crate::c6502::C6502;
 use crate::serialization::Savable;
 
-use std::mem::transmute;
 use std::io::Read;
 use std::io::Write;
+use std::mem::transmute;
 
 //use std::vec;
 
@@ -21,25 +21,25 @@ type TileIndex = u8;
 type Attribute = u8; // An entry in the attribute table
 type SpriteId = u8;
 
-const COLOR_TRANSPARENT:u8 = 0;
+const COLOR_TRANSPARENT: u8 = 0;
 
-const ADDRESS_NAMETABLE0:u16 = 0x2000;
-const ADDRESS_ATTRIBUTE_TABLE0:u16 = 0x23C0;
-const NAMETABLE_SIZE:u16 = 0x0400;
-const ADDRESS_UNIVERSAL_BACKGROUND_COLOR:u16 = 0x3f00;
-const ADDRESS_BACKGROUND_PALETTE0:u16 = 0x3f00;
-const SPRITE_HEIGHT:u8 = 8;
-const SPRITE_WIDTH:u8 = 8;
-const SCANLINE_PRERENDER:u16 = 261;
-const SCANLINE_RENDER:u16 = 0;
-const SCANLINE_POSTRENDER:u16 = 240;
-const SCANLINE_VBLANK:u16 = 241;
-const GLOBAL_BACKGROUND_COLOR:PaletteColor = PaletteColor { color: 0 };
+const ADDRESS_NAMETABLE0: u16 = 0x2000;
+const ADDRESS_ATTRIBUTE_TABLE0: u16 = 0x23C0;
+const NAMETABLE_SIZE: u16 = 0x0400;
+const ADDRESS_UNIVERSAL_BACKGROUND_COLOR: u16 = 0x3f00;
+const ADDRESS_BACKGROUND_PALETTE0: u16 = 0x3f00;
+const SPRITE_HEIGHT: u8 = 8;
+const SPRITE_WIDTH: u8 = 8;
+const SCANLINE_PRERENDER: u16 = 261;
+const SCANLINE_RENDER: u16 = 0;
+const SCANLINE_POSTRENDER: u16 = 240;
+const SCANLINE_VBLANK: u16 = 241;
+const GLOBAL_BACKGROUND_COLOR: PaletteColor = PaletteColor { color: 0 };
 
-pub const RENDER_WIDTH:usize = 256;
-pub const RENDER_HEIGHT:usize = 240;
-pub const UNRENDER_SIZE:usize = RENDER_WIDTH * RENDER_HEIGHT;
-pub const RENDER_SIZE:usize = UNRENDER_SIZE * 3;
+pub const RENDER_WIDTH: usize = 256;
+pub const RENDER_HEIGHT: usize = 240;
+pub const UNRENDER_SIZE: usize = RENDER_WIDTH * RENDER_HEIGHT;
+pub const RENDER_SIZE: usize = UNRENDER_SIZE * 3;
 
 pub struct Ppu {
     pub display: [u8; UNRENDER_SIZE],
@@ -48,17 +48,17 @@ pub struct Ppu {
     pub is_vblank_nmi: bool,
     pub is_scanline_irq: bool,
 
-    registers:PpuRegisters,
+    registers: PpuRegisters,
     sprite_pattern_table: bool, // Is the sprite pattern table the 'right' one?
     background_pattern_table: bool, // Is the background pattern table the right one?
     sprite_overflow: bool,
     sprite0_hit: bool,
-    sprite_size: bool, // false=8x8, true=8x16
+    sprite_size: bool,  // false=8x8, true=8x16
     frame_parity: bool, // Toggled every frame
-    open_bus: u8, // Open bus shared by all PPU registers
+    open_bus: u8,       // Open bus shared by all PPU registers
     ppu_master_select: bool,
     generate_vblank_nmi: bool,
-    ppudata_buffer:u8,
+    ppudata_buffer: u8,
 
     oam_ptr: u8,
 
@@ -76,11 +76,11 @@ pub struct Ppu {
     tile_attribute: u8,
     tile_pattern_low: u8,
     tile_pattern_high: u8,
-    sprite_patterns: [u16;8],
-    sprite_palettes: [u8;8],
-    sprite_xs: [u8;8],
-    sprite_priorities: [bool;8],
-    sprite_indices: [u8;8],
+    sprite_patterns: [u16; 8],
+    sprite_palettes: [u8; 8],
+    sprite_xs: [u8; 8],
+    sprite_priorities: [bool; 8],
+    sprite_indices: [u8; 8],
 }
 
 impl Savable for Ppu {
@@ -170,8 +170,8 @@ struct PpuRegisters {
     X = coarse X scroll
      */
     v: u16,
-    t: u16, // t is the address of the top-left onscreen tile
-    x: u8, // Fine x scroll
+    t: u16,  // t is the address of the top-left onscreen tile
+    x: u8,   // Fine x scroll
     w: bool, // First-or-second write toggle(PPUSCROLL and PPUADDR)
 
     vram_increment: bool, // false=increment by 1; true = increment by 32
@@ -241,17 +241,17 @@ impl PpuRegisters {
         }
     }
     pub fn copy_y(&mut self) {
-        let mask:u16 = 0b111101111100000;
+        let mask: u16 = 0b111101111100000;
         self.v &= !mask;
         self.v |= self.t & mask;
     }
     pub fn copy_x(&mut self) {
-        let mask:u16 =     0b10000011111;
+        let mask: u16 = 0b10000011111;
         self.v &= !mask;
         self.v |= self.t & mask;
     }
     fn reset_horizontal_position(&mut self) {
-        let mask:u16 = 0b10000011111;
+        let mask: u16 = 0b10000011111;
         self.v &= !mask;
         self.v |= self.t & mask;
     }
@@ -262,15 +262,14 @@ impl PpuRegisters {
             self.v &= !0x001F;
             self.v ^= 0x0400;
         } else {
-            self.v = (self.v+1)& 0x7FFF;
+            self.v = (self.v + 1) & 0x7FFF;
         }
         //eprintln!("DEBUG - COARSE-X {:x} {:x}", v, self.v);
-        }
+    }
     pub fn scanline(&self) -> u16 {
-        let coarse_y_mask:u16 =      0b1111100000;
-        let fine_y_mask:u16   = 0b111000000000000;
-        let y = (self.v & coarse_y_mask) >> 2 |
-                (self.v & fine_y_mask) >> 12;
+        let coarse_y_mask: u16 = 0b1111100000;
+        let fine_y_mask: u16 = 0b111000000000000;
+        let y = (self.v & coarse_y_mask) >> 2 | (self.v & fine_y_mask) >> 12;
         return y;
     }
     pub fn increment_y(&mut self) {
@@ -279,7 +278,7 @@ impl PpuRegisters {
             self.v += 0x1000;
         } else {
             v &= !0x7000;
-            let mut y:u16 = (v & 0x03e0) >> 5;
+            let mut y: u16 = (v & 0x03e0) >> 5;
             if y == 29 {
                 y = 0;
                 v ^= 0x0800;
@@ -291,31 +290,31 @@ impl PpuRegisters {
             self.v = (v & !0x03E0) | (y << 5);
         }
     }
-    pub fn write_control(&mut self, px:u8) {
+    pub fn write_control(&mut self, px: u8) {
         let x = px as u16;
-        let mask:u16 = 0b110000000000;
+        let mask: u16 = 0b110000000000;
         self.t &= !mask;
         self.t |= (x & 0x3) << 10;
         self.vram_increment = get_bit(px, 2) > 0;
         // eprintln!("DEBUG - PPU CONTROL WRITE {:x} {}", px, self.vram_increment);
     }
 
-    pub fn write_mask(&mut self, v:u8) {
+    pub fn write_mask(&mut self, v: u8) {
         // eprintln!("DEBUG - PPU MASK WRITE {:x}", v);
-        self.is_greyscale = get_bit(v,0)>0;
-        self.show_leftmost_background = get_bit(v,1)>0;
-        self.show_leftmost_sprite = get_bit(v,2)>0;
-        self.background_enabled = get_bit(v,3)>0;
-        self.sprites_enabled = get_bit(v,4)>0;
-        self.emphasize_red = get_bit(v,5)>0;
-        self.emphasize_green = get_bit(v,6)>0;
-        self.emphasize_blue = get_bit(v,7)>0;
+        self.is_greyscale = get_bit(v, 0) > 0;
+        self.show_leftmost_background = get_bit(v, 1) > 0;
+        self.show_leftmost_sprite = get_bit(v, 2) > 0;
+        self.background_enabled = get_bit(v, 3) > 0;
+        self.sprites_enabled = get_bit(v, 4) > 0;
+        self.emphasize_red = get_bit(v, 5) > 0;
+        self.emphasize_green = get_bit(v, 6) > 0;
+        self.emphasize_blue = get_bit(v, 7) > 0;
     }
 
     pub fn read_status(&mut self) {
         self.w = false;
     }
-    pub fn write_scroll(&mut self, px:u8) {
+    pub fn write_scroll(&mut self, px: u8) {
         let x = px as u16;
         if !self.w {
             // First write
@@ -330,7 +329,7 @@ impl PpuRegisters {
         self.w = !self.w;
     }
 
-    pub fn write_address(&mut self, x:u8) {
+    pub fn write_address(&mut self, x: u8) {
         if !self.w {
             self.t &= 0x00FF;
             self.t |= ((x & 0b00111111) as u16) << 8;
@@ -344,10 +343,8 @@ impl PpuRegisters {
     }
     fn is_rendering(&self) -> bool {
         let scanline = self.scanline();
-        return self.is_rendering_enabled() &&
-            ((scanline == SCANLINE_PRERENDER) ||
-             scanline < SCANLINE_POSTRENDER
-             );
+        return self.is_rendering_enabled()
+            && ((scanline == SCANLINE_PRERENDER) || scanline < SCANLINE_POSTRENDER);
     }
     pub fn vram_ptr(&self) -> u16 {
         return self.v;
@@ -395,29 +392,35 @@ impl PpuRegisters {
     }
     pub fn attribute_address(&self) -> u16 {
         let v = self.v;
-        return ADDRESS_ATTRIBUTE_TABLE0 |
-        (v & 0x0c00) |
-        ((v >> 4) & 0x38) |
-        ((v >> 2) & 0x07)
-            ;
+        return ADDRESS_ATTRIBUTE_TABLE0 | (v & 0x0c00) | ((v >> 4) & 0x38) | ((v >> 2) & 0x07);
     }
 }
 
 #[derive(Copy, Clone, Debug)]
 pub enum PpuPort {
-    PPUCTRL, PPUMASK, PPUSTATUS,
-    OAMADDR, OAMDATA, PPUSCROLL,
-    PPUADDR, PPUDATA, OAMDMA,
+    PPUCTRL,
+    PPUMASK,
+    PPUSTATUS,
+    OAMADDR,
+    OAMDATA,
+    PPUSCROLL,
+    PPUADDR,
+    PPUDATA,
+    OAMDMA,
 }
 
 impl AddressSpace for Ppu {
-    fn peek(&self, ptr:u16) -> u8 { return self.mapper.peek(ptr); }
-    fn poke(&mut self, ptr:u16, v:u8) { self.mapper.poke(ptr, v); }
+    fn peek(&self, ptr: u16) -> u8 {
+        return self.mapper.peek(ptr);
+    }
+    fn poke(&mut self, ptr: u16, v: u8) {
+        self.mapper.poke(ptr, v);
+    }
 }
 
 #[derive(Copy, Clone)]
 struct Sprite {
-    index:u8,
+    index: u8,
     x: u8,
     y: u8,
     tile_index: u8,
@@ -428,21 +431,21 @@ struct Sprite {
 }
 
 /* a=ABCDEFGH, b=12345678, combine_bitplanes(a,b) = A1B2C3D4E5F6G7H8 */
-fn combine_bitplanes(mut a:u8, mut b:u8) -> u16 {
+fn combine_bitplanes(mut a: u8, mut b: u8) -> u16 {
     let mut out = 0u16;
     for i in 0..8 {
-        out |= (((a&1)<<1 | (b&1)) as u16)<<(i*2);
+        out |= (((a & 1) << 1 | (b & 1)) as u16) << (i * 2);
         a >>= 1;
         b >>= 1;
     }
     return out;
 }
 
-fn reverse_bits(mut a:u8) -> u8 {
+fn reverse_bits(mut a: u8) -> u8 {
     let mut out = 0u8;
     for i in 0..8 {
         out <<= 1;
-        out |= a&1;
+        out |= a & 1;
         a >>= 1;
     }
     return out;
@@ -484,13 +487,13 @@ pub fn map_ppu_port(ptr: u16) -> Option<PpuPort> {
         0x2006 => Some(PPUADDR),
         0x2007 => Some(PPUDATA),
         0x4014 => Some(OAMDMA),
-        _      => None
+        _ => None,
     }
 }
 
 impl AddressSpace for CpuPpuInterconnect {
-    fn peek(&self, ptr:u16) -> u8 {
-        let ppu:&mut Ppu = unsafe { &mut *self.ppu };
+    fn peek(&self, ptr: u16) -> u8 {
+        let ppu: &mut Ppu = unsafe { &mut *self.ppu };
         match map_ppu_port(ptr) {
             Some(PPUCTRL) => ppu.open_bus,
             Some(PPUMASK) => ppu.open_bus,
@@ -504,13 +507,13 @@ impl AddressSpace for CpuPpuInterconnect {
             port => panic!("INVALID PPU PORT READ {:?} {:x}", port, ptr),
         }
     }
-    fn poke(&mut self, ptr:u16, value:u8) {
-        let ppu:&mut Ppu = unsafe { &mut *self.ppu };
+    fn poke(&mut self, ptr: u16, value: u8) {
+        let ppu: &mut Ppu = unsafe { &mut *self.ppu };
         ppu.open_bus = value;
         match map_ppu_port(ptr) {
             Some(PPUCTRL) => ppu.write_control(value),
             Some(PPUMASK) => ppu.write_mask(value),
-            Some(PPUSTATUS) => {},
+            Some(PPUSTATUS) => {}
             Some(OAMADDR) => ppu.write_oam_address(value),
             Some(OAMDATA) => ppu.write_oam_data(value),
             Some(PPUSCROLL) => ppu.write_scroll(value),
@@ -532,14 +535,14 @@ impl AddressSpace for CpuPpuInterconnect {
 }
 
 pub struct PaletteControl {
-    memory: [u8;32],
+    memory: [u8; 32],
 }
 
 impl PaletteControl {
     pub fn new() -> PaletteControl {
-        PaletteControl { memory: [0; 32 ] }
+        PaletteControl { memory: [0; 32] }
     }
-    fn map_ptr(&self, ptr:u16) -> usize {
+    fn map_ptr(&self, ptr: u16) -> usize {
         let remapped = match ptr {
             0x3f10 => 0x3f00,
             0x3f14 => 0x3f04,
@@ -552,10 +555,10 @@ impl PaletteControl {
 }
 
 impl Savable for PaletteControl {
-    fn save(&self, fh:&mut dyn Write) {
+    fn save(&self, fh: &mut dyn Write) {
         self.memory.save(fh);
     }
-    fn load(&mut self, fh:&mut dyn Read) {
+    fn load(&mut self, fh: &mut dyn Read) {
         self.memory.load(fh);
     }
 }
@@ -572,7 +575,10 @@ impl AddressSpace for PaletteControl {
 }
 
 #[derive(Copy, Clone)]
-enum PaletteType { Sprite, Background }
+enum PaletteType {
+    Sprite,
+    Background,
+}
 
 impl Clocked for Ppu {
     // High-level pattern here taken from https://github.com/fogleman/nes/blob/master/nes/ppu.go
@@ -600,14 +606,14 @@ impl Clocked for Ppu {
                     3 => self.fetch_bg_attribute(),
                     5 => self.fetch_bg_pattern_low(),
                     7 => self.fetch_bg_pattern_high(),
-                    _ => {},
+                    _ => {}
                 }
             }
             if self.scanline == SCANLINE_PRERENDER && self.cycle >= 280 && self.cycle <= 304 {
                 self.registers.copy_y();
             }
             if is_fetch_line {
-                if is_fetch_cycle && self.cycle%8 == 0 {
+                if is_fetch_cycle && self.cycle % 8 == 0 {
                     self.registers.increment_x();
                 }
                 if self.cycle == 256 {
@@ -644,20 +650,21 @@ impl Clocked for Ppu {
 
 #[derive(Debug)]
 struct PaletteColor {
-    color:u8,
+    color: u8,
 }
 
 impl PaletteColor {
-    pub fn new_from_parts(palette:u8, color:u8) -> PaletteColor {
+    pub fn new_from_parts(palette: u8, color: u8) -> PaletteColor {
         PaletteColor {
-            color: (palette*4 + color),
+            color: (palette * 4 + color),
         }
     }
     pub fn address(&self) -> u16 {
         // https://wiki.nesdev.com/w/index.php/PPU_palettes
         let base_address = ADDRESS_BACKGROUND_PALETTE0;
         let palette_size = 4;
-        let address:u16 = base_address + palette_size * (self.palette() as u16) + (self.palette_color() as u16);
+        let address: u16 =
+            base_address + palette_size * (self.palette() as u16) + (self.palette_color() as u16);
         address
     }
     pub fn palette(&self) -> u8 {
@@ -670,9 +677,8 @@ impl PaletteColor {
         return self.palette_color() == 0;
     }
     pub fn is_opaque(&self) -> bool {
-        return ! self.is_transparent();
+        return !self.is_transparent();
     }
-
 }
 
 // https://wiki.nesdev.com/w/index.php/PPU_rendering
@@ -713,11 +719,11 @@ impl Ppu {
             tile_attribute: 0,
             tile_pattern_low: 0,
             tile_pattern_high: 0,
-            sprite_patterns: [0;8],
-            sprite_palettes: [0;8],
-            sprite_xs: [0;8],
-            sprite_priorities: [false;8],
-            sprite_indices: [0;8],
+            sprite_patterns: [0; 8],
+            sprite_palettes: [0; 8],
+            sprite_xs: [0; 8],
+            sprite_priorities: [false; 8],
+            sprite_indices: [0; 8],
         }
     }
 
@@ -726,13 +732,13 @@ impl Ppu {
     }
 
     pub fn render(&self) -> [u8; RENDER_SIZE] {
-        let mut ret = [0;RENDER_SIZE];
+        let mut ret = [0; RENDER_SIZE];
         for i in 0..UNRENDER_SIZE {
             let c = self.display[i];
-            let (r,g,b) = self.lookup_system_pixel(c);
-            ret[i*3+0] = r;
-            ret[i*3+1] = g;
-            ret[i*3+2] = b;
+            let (r, g, b) = self.lookup_system_pixel(c);
+            ret[i * 3 + 0] = r;
+            ret[i * 3 + 1] = g;
+            ret[i * 3 + 2] = b;
         }
         return ret;
     }
@@ -764,22 +770,29 @@ impl Ppu {
         self.tile_attribute = self.peek(address);
     }
     fn fetch_bg_pattern_low(&mut self) {
-        let (ptr_low, _) = self.locate_pattern_row(PaletteType::Background, self.tile_nametable, self.registers.fine_y());
+        let (ptr_low, _) = self.locate_pattern_row(
+            PaletteType::Background,
+            self.tile_nametable,
+            self.registers.fine_y(),
+        );
         self.tile_pattern_low = self.peek(ptr_low);
-
     }
     fn fetch_bg_pattern_high(&mut self) {
-        let (_, ptr_high) = self.locate_pattern_row(PaletteType::Background, self.tile_nametable, self.registers.fine_y());
+        let (_, ptr_high) = self.locate_pattern_row(
+            PaletteType::Background,
+            self.tile_nametable,
+            self.registers.fine_y(),
+        );
         self.tile_pattern_high = self.peek(ptr_high);
     }
 
     fn fetch_tile_color_from_shift(&mut self) -> PaletteColor {
         let fine_x = self.registers.fine_x() as u16;
-        let low = (((self.tile_pattern_low_shift << fine_x) & 0x8000)>0) as u8;
-        let high = (((self.tile_pattern_high_shift << fine_x) & 0x8000)>0) as u8;
+        let low = (((self.tile_pattern_low_shift << fine_x) & 0x8000) > 0) as u8;
+        let high = (((self.tile_pattern_high_shift << fine_x) & 0x8000) > 0) as u8;
         let color = low | (high << 1);
-        let x = self.cycle-1;
-        let palette = (self.tile_palette_shift >> ternary((x%8 + fine_x)> 7, 0, 2))&0x3;
+        let x = self.cycle - 1;
+        let palette = (self.tile_palette_shift >> ternary((x % 8 + fine_x) > 7, 0, 2)) & 0x3;
         return PaletteColor::new_from_parts(palette as u8, color as u8);
     }
 
@@ -817,28 +830,28 @@ impl Ppu {
     }
 
     fn render_pixel(&mut self) {
-        let x = self.cycle-1;
+        let x = self.cycle - 1;
         let y = self.scanline;
         let bg_color = self.background_pixel();
         let (i, sprite_color) = self.sprite_pixel();
         // Sprite 0 test
-        if self.sprite_indices[i as usize] == 00 && sprite_color.is_opaque() && bg_color.is_opaque() {
+        if self.sprite_indices[i as usize] == 00 && sprite_color.is_opaque() && bg_color.is_opaque()
+        {
             self.sprite0_hit = true;
         }
         // Determine display color
-        let color =
-            if self.sprite_priorities[i as usize] && sprite_color.is_opaque() {
-                sprite_color
-            } else if bg_color.is_opaque() {
-                bg_color
-            } else if sprite_color.is_opaque() {
-                sprite_color
-            } else {
-                GLOBAL_BACKGROUND_COLOR
-            };
+        let color = if self.sprite_priorities[i as usize] && sprite_color.is_opaque() {
+            sprite_color
+        } else if bg_color.is_opaque() {
+            bg_color
+        } else if sprite_color.is_opaque() {
+            sprite_color
+        } else {
+            GLOBAL_BACKGROUND_COLOR
+        };
         // eprintln!("DEBUG - COLOR - {:?}", color);
         let system_color = self.peek(color.address());
-        self.write_system_pixel(x,y,system_color);
+        self.write_system_pixel(x, y, system_color);
     }
 
     fn background_pixel(&mut self) -> PaletteColor {
@@ -851,7 +864,7 @@ impl Ppu {
         if !self.is_sprites_enabled() {
             return (0, GLOBAL_BACKGROUND_COLOR);
         }
-        let x = self.cycle-1;
+        let x = self.cycle - 1;
         for i in 0..self.sprite_count as usize {
             let spritex = self.sprite_xs[i];
             let xsub = x as i16 - spritex as i16;
@@ -866,7 +879,7 @@ impl Ppu {
             }
             return (i as u8, palette_color);
         }
-        return (0,GLOBAL_BACKGROUND_COLOR);
+        return (0, GLOBAL_BACKGROUND_COLOR);
     }
     fn is_sprites_enabled(&self) -> bool {
         return self.registers.is_sprites_enabled();
@@ -908,7 +921,7 @@ impl Ppu {
         self.sprite_count = count as u8;
     }
 
-    fn fetch_sprite_pattern(&self, sprite:&Sprite, row: u16) -> Option<u16> {
+    fn fetch_sprite_pattern(&self, sprite: &Sprite, row: u16) -> Option<u16> {
         let is_size_16 = self.sprite_size;
         let row = row as i16 - sprite.y as i16;
         let height = ternary(is_size_16, 16, 8);
@@ -917,16 +930,22 @@ impl Ppu {
         }
         let row = ternary(sprite.flip_vertical, height - 1 - row, row);
         let tile = sprite.tile_index; //TODO -- ternary(row >= 8, sprite.tile_index+1, sprite.tile_index);
-        let row = ternary(row >= 8, row-8, row);
+        let row = ternary(row >= 8, row - 8, row);
         let (tile_row0, tile_row1) = self.fetch_pattern_row(PaletteType::Sprite, tile, row as u8);
-        let (tile_row0, tile_row1) =
-            ternary(sprite.flip_horizontal,
-                    (reverse_bits(tile_row0), reverse_bits(tile_row1)),
-                    (tile_row0, tile_row1));
+        let (tile_row0, tile_row1) = ternary(
+            sprite.flip_horizontal,
+            (reverse_bits(tile_row0), reverse_bits(tile_row1)),
+            (tile_row0, tile_row1),
+        );
         return Some(combine_bitplanes(tile_row1, tile_row0));
     }
 
-    fn locate_pattern_row(&self, palette_type: PaletteType, tile_index: u8, ysub:u8) -> (u16, u16) {
+    fn locate_pattern_row(
+        &self,
+        palette_type: PaletteType,
+        tile_index: u8,
+        ysub: u8,
+    ) -> (u16, u16) {
         // https://wiki.nesdev.com/w/index.php/PPU_pattern_tables
         let ptr_pattern_table_base = 0x0000;
         let size_pattern_table = 0x1000;
@@ -935,16 +954,16 @@ impl Ppu {
             PaletteType::Sprite => self.sprite_pattern_table,
             PaletteType::Background => self.background_pattern_table,
         };
-        let ptr_tile:u16 =
-            ptr_pattern_table_base +
-            size_pattern_table * (is_pattern_table_right as u16) +
-            (size_tile * tile_index as u16);
+        let ptr_tile: u16 = ptr_pattern_table_base
+            + size_pattern_table * (is_pattern_table_right as u16)
+            + (size_tile * tile_index as u16);
         let ptr_tile_row0 = ptr_tile + (ysub as u16);
         let ptr_tile_row1 = ptr_tile_row0 + 8; // The bits of the color id are stored in separate bit planes.
         (ptr_tile_row0, ptr_tile_row1)
     }
-    fn fetch_pattern_row(&self, palette_type: PaletteType, tile_index:u8, ysub:u8) -> (u8, u8) {
-        let (ptr_tile_row0, ptr_tile_row1) = self.locate_pattern_row(palette_type, tile_index, ysub);
+    fn fetch_pattern_row(&self, palette_type: PaletteType, tile_index: u8, ysub: u8) -> (u8, u8) {
+        let (ptr_tile_row0, ptr_tile_row1) =
+            self.locate_pattern_row(palette_type, tile_index, ysub);
         let tile_row0 = self.peek(ptr_tile_row0);
         let tile_row1 = self.peek(ptr_tile_row1);
         return (tile_row0, tile_row1);
@@ -975,16 +994,16 @@ impl Ppu {
     }
 
     fn lookup_sprite(&self, i: usize) -> Sprite {
-        let attribute = self.oam[i*4 + 2];
+        let attribute = self.oam[i * 4 + 2];
         return Sprite {
             index: i as u8,
-            y: self.oam[i*4 + 0],
-            tile_index: self.oam[i*4 + 1],
+            y: self.oam[i * 4 + 0],
+            tile_index: self.oam[i * 4 + 1],
             palette: (attribute & 3) + 4,
             is_front: get_bit(attribute, 5) == 0,
             flip_horizontal: get_bit(attribute, 6) > 0,
             flip_vertical: get_bit(attribute, 7) > 0,
-            x: self.oam[i*4 + 3],
+            x: self.oam[i * 4 + 3],
         };
     }
 
@@ -995,55 +1014,53 @@ impl Ppu {
     fn split_attribute_entry(&self, entry: Attribute, idx_x: u8, idx_y: u8) -> PaletteId {
         let (left, top) = ((idx_x % 4) < 2, (idx_y % 4) < 2);
         let palette_id = match (left, top) {
-            (true,  true)  => (entry >> 0) & 0x3,
-            (false, true)  => (entry >> 2) & 0x3,
-            (true,  false) => (entry >> 4) & 0x3,
+            (true, true) => (entry >> 0) & 0x3,
+            (false, true) => (entry >> 2) & 0x3,
+            (true, false) => (entry >> 4) & 0x3,
             (false, false) => (entry >> 6) & 0x3,
         };
         //eprintln!("DEBUG - ATTRIBUTE ENTRY - {:x} {}", entry, palette_id);
         return palette_id;
     }
 
-    pub fn write_control(&mut self, v:u8) {
+    pub fn write_control(&mut self, v: u8) {
         self.registers.write_control(v);
-        self.sprite_pattern_table = get_bit(v, 3)>0;
-        self.background_pattern_table = get_bit(v,4)>0;
-        self.sprite_size = get_bit(v,5)>0;
-        self.ppu_master_select = get_bit(v,6)>0;
-        self.generate_vblank_nmi = get_bit(v,7)>0;
+        self.sprite_pattern_table = get_bit(v, 3) > 0;
+        self.background_pattern_table = get_bit(v, 4) > 0;
+        self.sprite_size = get_bit(v, 5) > 0;
+        self.ppu_master_select = get_bit(v, 6) > 0;
+        self.generate_vblank_nmi = get_bit(v, 7) > 0;
     }
 
-    pub fn write_mask(&mut self, v:u8) {
+    pub fn write_mask(&mut self, v: u8) {
         self.registers.write_mask(v);
     }
 
     pub fn read_status(&mut self) -> u8 {
-        let ret =
-            (self.open_bus & 0b00011111) |
-            ((self.sprite_overflow as u8) << 5) |
-            ((self.sprite0_hit as u8) << 6) |
-            ((self.nmi_occurred as u8) << 7)
-            ;
+        let ret = (self.open_bus & 0b00011111)
+            | ((self.sprite_overflow as u8) << 5)
+            | ((self.sprite0_hit as u8) << 6)
+            | ((self.nmi_occurred as u8) << 7);
         self.set_vblank(false);
         self.registers.read_status();
         return ret;
     }
-    pub fn write_oam_address(&mut self, v:u8) {
+    pub fn write_oam_address(&mut self, v: u8) {
         self.oam_ptr = v;
     }
     pub fn read_oam_data(&mut self) -> u8 {
-        let ptr:u8 = self.oam_ptr;
+        let ptr: u8 = self.oam_ptr;
         return self.oam[ptr as usize];
     }
-    pub fn write_oam_data(&mut self, v:u8) {
-        let ptr:u8 = self.oam_ptr;
+    pub fn write_oam_data(&mut self, v: u8) {
+        let ptr: u8 = self.oam_ptr;
         self.oam[ptr as usize] = v;
         self.oam_ptr = self.oam_ptr.wrapping_add(1);
     }
-    pub fn write_scroll(&mut self, v:u8) {
+    pub fn write_scroll(&mut self, v: u8) {
         self.registers.write_scroll(v);
     }
-    pub fn write_address(&mut self, v:u8) {
+    pub fn write_address(&mut self, v: u8) {
         self.registers.write_address(v);
     }
     pub fn read_data(&mut self) -> u8 {
@@ -1058,7 +1075,7 @@ impl Ppu {
             val
         }
     }
-    pub fn write_data(&mut self, v:u8) {
+    pub fn write_data(&mut self, v: u8) {
         let ptr = self.registers.vram_ptr();
         self.registers.advance_vram_ptr();
         // eprintln!("DEBUG - PPU WRITE DATA - {:x} {:x} {:x}", ptr, v, self.registers.vram_ptr());
@@ -1071,7 +1088,7 @@ impl Ppu {
         if x >= 256 || y >= 240 {
             return;
         }
-        let i = (x + 256*y) as usize;
+        let i = (x + 256 * y) as usize;
         self.display[i] = c;
     }
     fn set_vblank(&mut self, new_vblank: bool) {
@@ -1088,77 +1105,76 @@ type RgbColor = (u8, u8, u8);
 type SystemPalette = [RgbColor; 64];
 
 // The NES can refer to 64 separate colors. This table has RGB values for each.
-pub const SYSTEM_PALETTE:SystemPalette =
-    [
-        // 0x
-        (124, 124, 124), // x0
-        (0,   0,   252), // x1
-        (0,   0,   188), // x2
-        (68,  40,  188), // x3
-        (148, 0,   132), // x4
-        (168, 0,   32),  // x5
-        (168, 16,  0),   // x6
-        (136, 20,  0),   // x7
-        (80,  48,  0),   // x8
-        (0,   120, 0),   // x9
-        (0,   104, 0),   // xA
-        (0,   88,  0),   // xB
-        (0,   64,  88),  // xC
-        (0,   0,   0),   // xD
-        (0,   0,   0),   // xE
-        (0,   0,   0),   // xF
-        // 1x
-        (188, 188, 188), // x0
-        (0,   120, 248), // x1
-        (0,   88,  248), // x2
-        (104, 68,  252), // x3
-        (216, 0,   204), // x4
-        (228, 0,   88),  // x5
-        (248, 56,  0),   // x6
-        (228, 92,  16),  // x7
-        (172, 124, 0),   // x8
-        (0,   184, 0),   // x9
-        (0,   168, 0),   // xA
-        (0,   168, 68),  // xB
-        (0,   136, 136), // xC
-        (0,   0,   0),   // xD
-        (0,   0,   0),   // xE
-        (0,   0,   0),   // xF
-        // 2x
-        (248, 248, 248), // x0
-        (60,  188, 252), // x1
-        (104, 136, 252), // x2
-        (152, 120, 248), // x3
-        (248, 120, 248), // x4
-        (248, 88,  152), // x5
-        (248, 120, 88),  // x6
-        (252, 160, 68),  // x7
-        (248, 184, 0),   // x8
-        (184, 248, 24),  // x9
-        (88,  216, 84),  // xA
-        (88,  248, 152), // xB
-        (0,   232, 216), // xC
-        (120, 120, 120), // xD
-        (0,   0,   0),   // xE
-        (0,   0,   0),   // xF
-        // 3x
-        (252, 252, 252), // x0
-        (164, 228, 252), // x1
-        (184, 184, 248), // x2
-        (216, 184, 248), // x3
-        (248, 184, 248), // x4
-        (248, 164, 192), // x5
-        (240, 208, 176), // x6
-        (252, 224, 168), // x7
-        (248, 216, 120), // x8
-        (216, 248, 120), // x9
-        (184, 248, 184), // xA
-        (184, 248, 216), // xB
-        (0,   252, 252), // xC
-        (216, 216, 216), // xD
-        (0,   0,   0),   // xE
-        (0,   0,   0),   // xF
-    ];
+pub const SYSTEM_PALETTE: SystemPalette = [
+    // 0x
+    (124, 124, 124), // x0
+    (0, 0, 252),     // x1
+    (0, 0, 188),     // x2
+    (68, 40, 188),   // x3
+    (148, 0, 132),   // x4
+    (168, 0, 32),    // x5
+    (168, 16, 0),    // x6
+    (136, 20, 0),    // x7
+    (80, 48, 0),     // x8
+    (0, 120, 0),     // x9
+    (0, 104, 0),     // xA
+    (0, 88, 0),      // xB
+    (0, 64, 88),     // xC
+    (0, 0, 0),       // xD
+    (0, 0, 0),       // xE
+    (0, 0, 0),       // xF
+    // 1x
+    (188, 188, 188), // x0
+    (0, 120, 248),   // x1
+    (0, 88, 248),    // x2
+    (104, 68, 252),  // x3
+    (216, 0, 204),   // x4
+    (228, 0, 88),    // x5
+    (248, 56, 0),    // x6
+    (228, 92, 16),   // x7
+    (172, 124, 0),   // x8
+    (0, 184, 0),     // x9
+    (0, 168, 0),     // xA
+    (0, 168, 68),    // xB
+    (0, 136, 136),   // xC
+    (0, 0, 0),       // xD
+    (0, 0, 0),       // xE
+    (0, 0, 0),       // xF
+    // 2x
+    (248, 248, 248), // x0
+    (60, 188, 252),  // x1
+    (104, 136, 252), // x2
+    (152, 120, 248), // x3
+    (248, 120, 248), // x4
+    (248, 88, 152),  // x5
+    (248, 120, 88),  // x6
+    (252, 160, 68),  // x7
+    (248, 184, 0),   // x8
+    (184, 248, 24),  // x9
+    (88, 216, 84),   // xA
+    (88, 248, 152),  // xB
+    (0, 232, 216),   // xC
+    (120, 120, 120), // xD
+    (0, 0, 0),       // xE
+    (0, 0, 0),       // xF
+    // 3x
+    (252, 252, 252), // x0
+    (164, 228, 252), // x1
+    (184, 184, 248), // x2
+    (216, 184, 248), // x3
+    (248, 184, 248), // x4
+    (248, 164, 192), // x5
+    (240, 208, 176), // x6
+    (252, 224, 168), // x7
+    (248, 216, 120), // x8
+    (216, 248, 120), // x9
+    (184, 248, 184), // xA
+    (184, 248, 216), // xB
+    (0, 252, 252),   // xC
+    (216, 216, 216), // xD
+    (0, 0, 0),       // xE
+    (0, 0, 0),       // xF
+];
 
 mod tests {
     use super::*;
@@ -1168,7 +1184,7 @@ mod tests {
         let a = 0b10011110;
         let b = 0b01101100;
         let o = 0b1001011011111000;
-        assert_eq!(combine_bitplanes(a,b), o);
+        assert_eq!(combine_bitplanes(a, b), o);
     }
     #[test]
     fn test_reverse_bits() {

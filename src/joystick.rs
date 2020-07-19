@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 
+use core::cell::Cell;
 use std::io::Read;
 use std::io::Write;
-use core::cell::Cell;
 
 use crate::common::get_bit;
 use crate::mapper::AddressSpace;
@@ -54,12 +54,12 @@ impl Joystick {
 }
 
 impl AddressSpace for Joystick {
-    fn peek(&self, _ptr:u16) -> u8 {
+    fn peek(&self, _ptr: u16) -> u8 {
         self.reset_from_strobe();
         return self.get_next_button();
     }
-    fn poke(&mut self, _ptr:u16, v:u8) {
-        self.strobe_active = get_bit(v,0)>0;
+    fn poke(&mut self, _ptr: u16, v: u8) {
+        self.strobe_active = get_bit(v, 0) > 0;
         self.reset_from_strobe();
     }
 }

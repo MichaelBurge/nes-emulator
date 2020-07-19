@@ -2,26 +2,26 @@
 #![allow(non_camel_case_types)]
 #![allow(dead_code)]
 
-use crate::common::*;
-use crate::mapper::*;
-use crate::c6502::C6502;
 use crate::apu::Apu;
-use crate::ppu::Ppu;
+use crate::apu::ApuPort::*;
+use crate::c6502::C6502;
+use crate::common::*;
+use crate::joystick::Joystick;
+use crate::mapper::*;
+use crate::mapper::{Mapper, Ram};
 use crate::ppu::CpuPpuInterconnect;
+use crate::ppu::PaletteControl;
+use crate::ppu::Ppu;
 use crate::ppu::PpuPort;
 use crate::ppu::PpuPort::*;
-use crate::ppu::PaletteControl;
-use crate::apu::ApuPort::*;
-use crate::mapper::{Mapper, Ram};
-use crate::joystick::Joystick;
 use crate::serialization::Savable;
 
 use core::mem::transmute_copy;
+use std::fmt;
 use std::fs::File;
+use std::io;
 use std::io::Read;
 use std::io::Write;
-use std::io;
-use std::fmt;
 use std::ops::DerefMut;
 
 pub struct Nes {
@@ -67,7 +67,7 @@ pub fn read_ines(filename: String) -> Result<Ines, io::Error> {
     // https://wiki.nesdev.com/w/index.php/INES
     let mut file = File::open(filename)?;
     // Header
-    let mut header:[u8;16] = [0; 16];
+    let mut header: [u8; 16] = [0; 16];
     file.read_exact(&mut header)?;
     assert!(header[0] == 0x4e);
     assert!(header[1] == 0x45);
@@ -75,15 +75,15 @@ pub fn read_ines(filename: String) -> Result<Ines, io::Error> {
     assert!(header[3] == 0x1a);
     let num_prg_chunks = header[4];
     let num_chr_chunks = header[5];
-    let mut prg_rom:Vec<u8> = Vec::new();
-    for _i in 0 .. num_prg_chunks {
-        let mut bf:Vec<u8> = vec!(0; 16384);
+    let mut prg_rom: Vec<u8> = Vec::new();
+    for _i in 0..num_prg_chunks {
+        let mut bf: Vec<u8> = vec![0; 16384];
         file.read_exact(&mut bf)?;
         prg_rom.append(&mut bf);
     }
-    let mut chr_rom:Vec<u8> = Vec::new();
-    for _i in 0 .. num_chr_chunks {
-        let mut bf:Vec<u8> = vec!(0; 8192);
+    let mut chr_rom: Vec<u8> = Vec::new();
+    for _i in 0..num_chr_chunks {
+        let mut bf: Vec<u8> = vec![0; 8192];
         file.read_exact(&mut bf)?;
         chr_rom.append(&mut bf);
     }
@@ -104,22 +104,26 @@ pub fn read_ines(filename: String) -> Result<Ines, io::Error> {
     return Ok(ret);
 }
 
-pub fn load_ines(rom: Ines, joystick1: Box<dyn AddressSpace>, joystick2: Box<dyn AddressSpace>) -> Nes {
+pub fn load_ines(
+    rom: Ines,
+    joystick1: Box<dyn AddressSpace>,
+    joystick2: Box<dyn AddressSpace>,
+) -> Nes {
     if rom.mapper != 0 {
         panic!("Only mapper 0 supported. Found {}", rom.mapper);
     }
-    let cpu_mapper:Mapper = {
+    let cpu_mapper: Mapper = {
         let HiddenBytes(bytes) = rom.prg_rom;
         let cartridge = Rom::new(bytes);
         let mut mapper = Mapper::new();
         match rom.num_prg_chunks {
-            1 => { mapper.map_mirrored(0x0000, 0x3FFF, 0x8000, 0xFFFF, Box::new(cartridge), true) },
-            2 => { mapper.map_mirrored(0x0000, 0x7FFF, 0x8000, 0xFFFF, Box::new(cartridge), true) },
+            1 => mapper.map_mirrored(0x0000, 0x3FFF, 0x8000, 0xFFFF, Box::new(cartridge), true),
+            2 => mapper.map_mirrored(0x0000, 0x7FFF, 0x8000, 0xFFFF, Box::new(cartridge), true),
             _ => panic!("load_ines - Unexpected number of PRG chunks"),
         };
         mapper
     };
-    let ppu_mapper:Rom = {
+    let ppu_mapper: Rom = {
         let HiddenBytes(bytes) = rom.chr_rom;
         let cartridge_ppu = Rom::new(bytes);
         cartridge_ppu
@@ -136,7 +140,7 @@ impl Nes {
     }
     pub fn run_frame_headless(&mut self) {
         let cpu_clocks_per_scanline = 114; // 113.667
-        // 0 and 241 are the pre-render and post-render scanlines
+                                           // 0 and 241 are the pre-render and post-render scanlines
         for _i in 0..241 {
             run_clocks(&mut *self.cpu, cpu_clocks_per_scanline);
             // TODO: Signal on is_scanline_irq
@@ -153,10 +157,16 @@ impl Nes {
     pub fn current_frame(&self) -> u32 {
         return self.ppu.current_frame();
     }
-    fn map_nes_cpu(&mut self, joystick1: Box<dyn AddressSpace>, _joystick2: Box<dyn AddressSpace>, cartridge: Box<dyn AddressSpace>) {
-        let mut mapper:Mapper = Mapper::new();
-        let cpu_ram:Ram = Ram::new(0x800);
-        let cpu_ppu:CpuPpuInterconnect = CpuPpuInterconnect::new(self.ppu.deref_mut(), self.cpu.deref_mut());
+    fn map_nes_cpu(
+        &mut self,
+        joystick1: Box<dyn AddressSpace>,
+        _joystick2: Box<dyn AddressSpace>,
+        cartridge: Box<dyn AddressSpace>,
+    ) {
+        let mut mapper: Mapper = Mapper::new();
+        let cpu_ram: Ram = Ram::new(0x800);
+        let cpu_ppu: CpuPpuInterconnect =
+            CpuPpuInterconnect::new(self.ppu.deref_mut(), self.cpu.deref_mut());
         let apu = self.apu.deref_mut() as *mut Apu;
         // https://wiki.nesdev.com/w/index.php/CPU_memory_map
         // NOTE: These are checked in-order, so put frequently-used components first
@@ -176,9 +186,9 @@ impl Nes {
     }
     fn map_nes_ppu(&mut self, cartridge_ppu: Box<dyn AddressSpace>) {
         // https://wiki.nesdev.com/w/index.php/PPU_memory_map
-        let mut mapper:Mapper = Mapper::new();
-        let ppu_ram:Ram = Ram::new(0x800);
-        let palette_ram:PaletteControl = PaletteControl::new();
+        let mut mapper: Mapper = Mapper::new();
+        let ppu_ram: Ram = Ram::new(0x800);
+        let palette_ram: PaletteControl = PaletteControl::new();
         // Pattern table
         mapper.map_address_space(0x0000, 0x1FFF, cartridge_ppu, true);
         // Nametables
@@ -192,7 +202,9 @@ impl Nes {
 impl Clocked for Nes {
     fn clock(&mut self) {
         self.cpu.clock();
-        for _i in 1..3 { self.ppu.clock(); }
+        for _i in 1..3 {
+            self.ppu.clock();
+        }
         if self.ppu.is_vblank_nmi {
             //eprintln!("DEBUG - VBLANK-NMI DETECTED");
             self.cpu.nmi();
