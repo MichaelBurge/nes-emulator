@@ -16,7 +16,6 @@ use std::{
 
 use nes_emulator::{
     common::Clocked,
-    headless_protocol::*,
     joystick::Joystick,
     mapper::AddressSpace,
     nes::{load_ines, read_ines, Nes},

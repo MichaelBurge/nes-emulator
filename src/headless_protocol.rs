@@ -2,14 +2,7 @@ use crate::serialization::Savable;
 use std::io::{Read, Write};
 
 #[cfg(unix)]
-use std::{
-    ffi::OsStr,
-    fs::File,
-    os::unix::{
-        io::{AsRawFd, FromRawFd},
-        net::UnixStream,
-    },
-};
+use std::{ffi::OsStr, os::unix::net::UnixStream};
 
 #[derive(Debug, Clone)]
 pub enum Command {
@@ -34,27 +27,6 @@ use Command::*;
 pub enum RenderStyle {
     Plain = 0,
     Rgb = 1,
-}
-
-pub fn read_command_response<F: Read>(fh: &mut F, c: &Command) -> Vec<u8> {
-    match c {
-        LoadRom(_, _) => vec![],
-        StepFrame => vec![],
-        RenderFrame(render_style) => match *render_style as u8 {
-            0 => read_bytes(fh, crate::ppu::UNRENDER_SIZE),
-            1 => read_bytes(fh, crate::ppu::RENDER_SIZE),
-            x => panic!("Unknown render style {:?}", x),
-        },
-        SetInputs(_) => vec![],
-        SaveState(_) => vec![],
-        LoadState(_) => vec![],
-        GetInfo => vec![],
-        Step => vec![],
-        SaveTas => vec![],
-        Peek(_) => read_bytes(fh, 1),
-        Poke(_, _) => vec![],
-        SetRendering(_) => vec![],
-    }
 }
 
 impl Savable for Command {
@@ -159,14 +131,58 @@ fn read_value<T: Savable + Default>(r: &mut dyn Read) -> T {
     t
 }
 
+pub struct SocketHeadlessClient(UnixStream);
+impl SocketHeadlessClient {
+    pub fn load_rom(&mut self, save_tas: bool, filename: String) {
+        LoadRom(save_tas, filename).save(&mut self.0)
+    }
+    pub fn step_frame(&mut self) {
+        StepFrame.save(&mut self.0)
+    }
+    pub fn render_frame(&mut self, render_style: RenderStyle) -> Vec<u8> {
+        RenderFrame(render_style).save(&mut self.0);
+        match render_style as u8 {
+            0 => read_bytes(&mut self.0, crate::ppu::UNRENDER_SIZE),
+            1 => read_bytes(&mut self.0, crate::ppu::RENDER_SIZE),
+            x => panic!("Unknown render style {:?}", x),
+        }
+    }
+    pub fn set_inputs(&mut self, inputs: u8) {
+        SetInputs(inputs).save(&mut self.0)
+    }
+    pub fn save_state(&mut self, filename: String) {
+        SaveState(filename).save(&mut self.0)
+    }
+    pub fn load_state(&mut self, filename: String) {
+        LoadState(filename).save(&mut self.0)
+    }
+    pub fn get_info(&mut self) {
+        GetInfo.save(&mut self.0)
+    }
+    pub fn step(&mut self) {
+        Step.save(&mut self.0)
+    }
+    pub fn save_tas(&mut self) {
+        SaveTas.save(&mut self.0)
+    }
+    pub fn peek(&mut self, address: u16) -> u8 {
+        Peek(address).save(&mut self.0);
+        read_value::<u8>(&mut self.0)
+    }
+    pub fn poke(&mut self, address: u16, value: u8) {
+        Poke(address, value).save(&mut self.0)
+    }
+    pub fn set_rendering(&mut self, is_rendering: bool) {
+        SetRendering(is_rendering).save(&mut self.0)
+    }
+}
+
 #[cfg(unix)]
 #[allow(dead_code)]
-pub fn connect_socket<P: AsRef<OsStr>>(filename: P) -> UnixStream {
+pub fn connect_socket<P: AsRef<OsStr>>(filename: P) -> SocketHeadlessClient {
     let stream = UnixStream::connect(filename.as_ref()).expect(&*format!(
         "Unable to connect to unix domain socket at {:?}",
         filename.as_ref()
     ));
-    stream
+    SocketHeadlessClient(stream)
 }
-
-pub type SocketHeadlessClient = UnixStream;
