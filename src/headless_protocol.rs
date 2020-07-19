@@ -121,7 +121,8 @@ fn read_byte(r: &mut dyn Read) -> u8 {
 }
 fn read_bytes(r: &mut dyn Read, num_bytes: usize) -> Vec<u8> {
     let mut bytes = vec![0; num_bytes];
-    bytes.load(r);
+    r.read_exact(&mut bytes)
+        .expect(&*format!("Unable to read {} bytes", num_bytes));
     bytes
 }
 
