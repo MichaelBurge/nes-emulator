@@ -1,6 +1,16 @@
 use crate::serialization::Savable;
 use std::io::{Read, Write};
 
+#[cfg(unix)]
+use std::{
+    fs::File,
+    os::unix::{
+        io::{AsRawFd, FromRawFd},
+        net::UnixStream,
+    },
+    path::Path,
+};
+
 const COMMAND_LOAD_ROM: u8 = 1;
 const COMMAND_STEP_FRAME: u8 = 2;
 const COMMAND_RENDER_FRAME: u8 = 3;
@@ -117,5 +127,19 @@ impl<R: Read, W: Write> HeadlessClient<R, W> {
         let mut bytes = vec![0; num_bytes];
         bytes.load(&mut self.r);
         bytes
+    }
+    #[cfg(unix)]
+    #[allow(dead_code)]
+    pub fn connect_socket<P: AsRef<Path>>(filename: P) -> HeadlessClient<UnixStream, File> {
+        let stream = UnixStream::connect(filename.as_ref()).expect(&*format!(
+            "Unable to connect to unix domain socket at {:?}",
+            filename.as_ref()
+        ));
+        let fd = stream.as_raw_fd();
+        let fd_out = unsafe { File::from_raw_fd(fd) };
+        HeadlessClient {
+            r: stream,
+            w: fd_out,
+        }
     }
 }
