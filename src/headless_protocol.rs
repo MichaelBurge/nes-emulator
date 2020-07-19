@@ -31,7 +31,7 @@ pub enum RenderStyle {
     Rgb = 1,
 }
 
-trait THeadlessClient {
+pub trait THeadlessClient {
     fn load_rom(&mut self, record_tas: bool, filename: &String);
     fn step_frame(&mut self);
     fn render_frame(&mut self, render_style: RenderStyle) -> Vec<u8>;
@@ -46,7 +46,7 @@ trait THeadlessClient {
     fn set_rendering(&mut self, is_rendering: bool);
 }
 
-struct HeadlessClient<R: Read, W: Write> {
+pub struct HeadlessClient<R: Read, W: Write> {
     r: R,
     w: W,
 }
@@ -130,7 +130,7 @@ impl<R: Read, W: Write> HeadlessClient<R, W> {
     }
     #[cfg(unix)]
     #[allow(dead_code)]
-    pub fn connect_socket<P: AsRef<Path>>(filename: P) -> HeadlessClient<UnixStream, File> {
+    pub fn connect_socket<P: AsRef<Path>>(filename: P) -> SocketHeadlessClient {
         let stream = UnixStream::connect(filename.as_ref()).expect(&*format!(
             "Unable to connect to unix domain socket at {:?}",
             filename.as_ref()
@@ -143,3 +143,5 @@ impl<R: Read, W: Write> HeadlessClient<R, W> {
         }
     }
 }
+
+pub type SocketHeadlessClient = HeadlessClient<UnixStream, File>;
