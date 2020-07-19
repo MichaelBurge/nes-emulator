@@ -9,9 +9,9 @@ use std::{
     io::{Read, Write},
     os::unix::{
         io::{AsRawFd, FromRawFd},
-        net::UnixStream,
+        net::UnixListener,
     },
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use nes_emulator::{
@@ -29,28 +29,47 @@ struct Opts {
 
 fn main() {
     let opts = Opts::parse();
-    let mut headless = match opts.socket {
+    match opts.socket {
         None => {
             // Standard stdout() object is line-buffered
             let stdin = unsafe { File::from_raw_fd(0) };
             let stdout = unsafe { File::from_raw_fd(1) };
-            Headless::new(Box::new(stdin), Box::new(stdout))
+            let mut headless = Headless::new(Box::new(stdin), Box::new(stdout));
+            loop {
+                headless.dispatch_command()
+            }
         }
         Some(ref path) => {
-            let stream = UnixStream::connect(path).expect(&*format!(
+            let path = Path::new(path);
+            if path.exists() {
+                std::fs::remove_file(&path).expect(&*format!(
+                    "Unable to clean up old domain socket at {:?}",
+                    path
+                ));
+            }
+            let listener = UnixListener::bind(path).expect(&*format!(
                 "Unable to connect to domain socket at {:?}",
                 path
             ));
-            let fd = stream.as_raw_fd();
-            // Duplicate the socket for both read and write.
-            let stdin = unsafe { File::from_raw_fd(fd) };
-            let stdout = unsafe { File::from_raw_fd(fd) };
-            Headless::new(Box::new(stdin), Box::new(stdout))
+            for stream in listener.incoming() {
+                match stream {
+                    Ok(stream) => {
+                        let fd = stream.as_raw_fd();
+                        // Duplicate the socket for both read and write.
+                        let stdin = unsafe { File::from_raw_fd(fd) };
+                        let stdout = unsafe { File::from_raw_fd(fd) };
+                        let mut headless = Headless::new(Box::new(stdin), Box::new(stdout));
+                        loop {
+                            headless.dispatch_command()
+                        }
+                    }
+                    Err(err) => {
+                        panic!("Error: {:?}", err);
+                    }
+                }
+            }
         }
     };
-    loop {
-        headless.dispatch_command()
-    }
 }
 
 struct Headless {
