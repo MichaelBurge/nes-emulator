@@ -1,36 +1,53 @@
 #![allow(unused_must_use)]
 #![cfg(unix)]
 
-mod apu;
-mod c6502;
-mod common;
-mod joystick;
-mod mapper;
-mod nes;
-mod ppu;
-mod serialization;
-
+use clap::Clap;
 use core::ptr::null_mut;
-use std::fmt::Debug;
-use std::fs::File;
-use std::io::Read;
-use std::io::Write;
-use std::os::unix::io::FromRawFd;
+use std::{
+    fmt::Debug,
+    fs::File,
+    io::{Read, Write},
+    os::unix::{
+        io::{AsRawFd, FromRawFd},
+        net::UnixStream,
+    },
+    path::PathBuf,
+};
 
-use crate::common::Clocked;
-use crate::joystick::Joystick;
-use crate::mapper::AddressSpace;
-use crate::nes::load_ines;
-use crate::nes::read_ines;
-use crate::nes::Nes;
-use crate::serialization::read_value;
-use crate::serialization::Savable;
+use nes_emulator::{
+    common::Clocked,
+    joystick::Joystick,
+    mapper::AddressSpace,
+    nes::{load_ines, read_ines, Nes},
+    serialization::{read_value, Savable},
+};
+
+#[derive(Clap)]
+struct Opts {
+    socket: Option<PathBuf>,
+}
 
 fn main() {
-    // Standard stdout() object is line-buffered
-    let stdin = unsafe { File::from_raw_fd(0) };
-    let stdout = unsafe { File::from_raw_fd(1) };
-    let mut headless = Headless::new(Box::new(stdin), Box::new(stdout));
+    let opts = Opts::parse();
+    let mut headless = match opts.socket {
+        None => {
+            // Standard stdout() object is line-buffered
+            let stdin = unsafe { File::from_raw_fd(0) };
+            let stdout = unsafe { File::from_raw_fd(1) };
+            Headless::new(Box::new(stdin), Box::new(stdout))
+        }
+        Some(ref path) => {
+            let stream = UnixStream::connect(path).expect(&*format!(
+                "Unable to connect to domain socket at {:?}",
+                path
+            ));
+            let fd = stream.as_raw_fd();
+            // Duplicate the socket for both read and write.
+            let stdin = unsafe { File::from_raw_fd(fd) };
+            let stdout = unsafe { File::from_raw_fd(fd) };
+            Headless::new(Box::new(stdin), Box::new(stdout))
+        }
+    };
     loop {
         headless.dispatch_command()
     }
