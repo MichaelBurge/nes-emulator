@@ -1,4 +1,5 @@
 use crate::serialization::Savable;
+use log::debug;
 use std::io::{Read, Write};
 
 #[cfg(unix)]
@@ -9,7 +10,7 @@ pub enum Command {
     LoadRom(bool, String),
     StepFrame,
     RenderFrame(RenderStyle),
-    SetInputs(u8),
+    SetInputs(u8, u8),
     SaveState(String),
     LoadState(String),
     GetInfo,
@@ -31,6 +32,7 @@ pub enum RenderStyle {
 
 impl Savable for Command {
     fn save(&self, fh: &mut dyn Write) {
+        debug!("Sending command: {:?}", self);
         match self.clone() {
             LoadRom(record_tas, filename) => {
                 write_byte(fh, 1);
@@ -44,8 +46,9 @@ impl Savable for Command {
                 write_byte(fh, 3);
                 write_byte(fh, render_style as u8);
             }
-            SetInputs(inputs) => {
+            SetInputs(controller_id, inputs) => {
                 write_byte(fh, 4);
+                write_byte(fh, controller_id);
                 write_byte(fh, inputs);
             }
             SaveState(filename) => {
@@ -94,7 +97,7 @@ impl Savable for Command {
                 let render_style = unsafe { std::mem::transmute::<u8, RenderStyle>(style_byte) };
                 RenderFrame(render_style)
             }
-            4 => SetInputs(read_value::<u8>(fh)),
+            4 => SetInputs(read_value::<u8>(fh), read_value::<u8>(fh)),
             5 => SaveState(read_value::<String>(fh)),
             6 => LoadState(read_value::<String>(fh)),
             7 => GetInfo,
@@ -135,46 +138,63 @@ fn read_value<T: Savable + Default>(r: &mut dyn Read) -> T {
 pub struct SocketHeadlessClient(UnixStream);
 impl SocketHeadlessClient {
     pub fn load_rom(&mut self, save_tas: bool, filename: String) {
-        LoadRom(save_tas, filename).save(&mut self.0)
+        LoadRom(save_tas, filename).save(&mut self.0);
+        self.sync();
     }
     pub fn step_frame(&mut self) {
-        StepFrame.save(&mut self.0)
+        StepFrame.save(&mut self.0);
+        self.sync();
     }
     pub fn render_frame(&mut self, render_style: RenderStyle) -> Vec<u8> {
         RenderFrame(render_style).save(&mut self.0);
-        match render_style as u8 {
+        let bytes = match render_style as u8 {
             0 => read_bytes(&mut self.0, crate::ppu::UNRENDER_SIZE),
             1 => read_bytes(&mut self.0, crate::ppu::RENDER_SIZE),
             x => panic!("Unknown render style {:?}", x),
-        }
+        };
+        self.sync();
+        bytes
     }
-    pub fn set_inputs(&mut self, inputs: u8) {
-        SetInputs(inputs).save(&mut self.0)
+    pub fn set_inputs(&mut self, controller_id: u8, inputs: u8) {
+        SetInputs(controller_id, inputs).save(&mut self.0);
+        self.sync();
     }
     pub fn save_state(&mut self, filename: String) {
-        SaveState(filename).save(&mut self.0)
+        SaveState(filename).save(&mut self.0);
+        self.sync();
     }
     pub fn load_state(&mut self, filename: String) {
-        LoadState(filename).save(&mut self.0)
+        LoadState(filename).save(&mut self.0);
+        self.sync();
     }
     pub fn get_info(&mut self) {
-        GetInfo.save(&mut self.0)
+        GetInfo.save(&mut self.0);
+        self.sync();
     }
     pub fn step(&mut self) {
-        Step.save(&mut self.0)
+        Step.save(&mut self.0);
+        self.sync();
     }
     pub fn save_tas(&mut self) {
-        SaveTas.save(&mut self.0)
+        SaveTas.save(&mut self.0);
+        self.sync();
     }
     pub fn peek(&mut self, address: u16) -> u8 {
         Peek(address).save(&mut self.0);
-        read_value::<u8>(&mut self.0)
+        let x = read_value::<u8>(&mut self.0);
+        self.sync();
+        x
     }
     pub fn poke(&mut self, address: u16, value: u8) {
-        Poke(address, value).save(&mut self.0)
+        Poke(address, value).save(&mut self.0);
+        self.sync();
     }
     pub fn set_rendering(&mut self, is_rendering: bool) {
-        SetRendering(is_rendering).save(&mut self.0)
+        SetRendering(is_rendering).save(&mut self.0);
+        self.sync();
+    }
+    fn sync(&mut self) {
+        debug!("sync={}", read_value::<u8>(&mut self.0));
     }
 }
 
