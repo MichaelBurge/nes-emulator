@@ -150,7 +150,11 @@ impl<T: Savable + Default> Savable for Vec<T> {
 
 impl Savable for String {
     fn save(&self, fh: &mut dyn Write) {
-        self.bytes().collect::<Vec<_>>().save(fh);
+        let len = self.len() as u32;
+        len.save(fh);
+        for byte in self.bytes() {
+            byte.save(fh);
+        }
     }
     fn load(&mut self, fh: &mut dyn Read) {
         let len = read_value::<u32>(fh) as usize;
