@@ -148,6 +148,20 @@ impl<T: Savable + Default> Savable for Vec<T> {
     }
 }
 
+impl Savable for String {
+    fn save(&self, fh: &mut dyn Write) {
+        self.bytes().collect::<Vec<_>>().save(fh);
+    }
+    fn load(&mut self, fh: &mut dyn Read) {
+        let len = read_value::<u32>(fh) as usize;
+        let mut bytes = vec![0; len];
+        for i in 0..len {
+            bytes[i] = read_value::<u8>(fh);
+        }
+        *self = String::from_utf8(bytes).expect("Invalid utf8");
+    }
+}
+
 pub fn read_value<T: Default + Savable>(fh: &mut dyn Read) -> T {
     let mut t: T = Default::default();
     t.load(fh);

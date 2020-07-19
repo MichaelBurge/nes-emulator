@@ -16,6 +16,7 @@ use std::{
 
 use nes_emulator::{
     common::Clocked,
+    headless_protocol::*,
     joystick::Joystick,
     mapper::AddressSpace,
     nes::{load_ines, read_ines, Nes},
@@ -124,7 +125,7 @@ impl Headless {
 
     fn command_load_rom(&mut self) {
         let _record_tas = self.read_byte();
-        let filename = self.read_length_string();
+        let filename = self.read_value::<String>();
         let mut joystick1 = Box::new(Joystick::new());
         let mut joystick2 = Box::new(Joystick::new());
         self.joystick1 = &mut *joystick1;
@@ -160,12 +161,12 @@ impl Headless {
         unsafe { (*self.joystick1).set_buttons(button_mask) };
     }
     fn command_save_state(&mut self) {
-        let filename = self.read_length_string();
+        let filename = self.read_value::<String>();
         let mut file = File::create(filename).unwrap();
         self.nes.as_ref().unwrap().save(&mut file);
     }
     fn command_load_state(&mut self) {
-        let filename = self.read_length_string();
+        let filename = self.read_value::<String>();
         let mut file = File::open(filename).unwrap();
         self.nes.as_mut().unwrap().load(&mut file);
     }
@@ -200,13 +201,5 @@ impl Headless {
     }
     fn read_byte(&mut self) -> u8 {
         self.read_value::<u8>()
-    }
-    fn read_length_string(&mut self) -> String {
-        let len: usize = self.read_value::<u32>() as usize;
-        let mut data: Vec<u8> = vec![0; len];
-        for i in 0..len {
-            data[i] = self.read_byte();
-        }
-        return String::from_utf8(data).unwrap();
     }
 }
