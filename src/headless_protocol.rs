@@ -212,7 +212,7 @@ impl SocketHeadlessClient {
         Peek(address).save(&mut self.0);
         let x = read_value::<u8>(&mut self.0);
         self.sync();
-        debug!("Peek({})={}", address, x);
+        trace!("Peek({})={}", address, x);
         x
     }
     pub fn poke(&mut self, address: u16, value: u8) {
