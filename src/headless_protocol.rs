@@ -1,9 +1,15 @@
 use crate::serialization::Savable;
-use log::debug;
-use std::io::{Read, Write};
+use log::{debug, error, trace};
+use std::io::{BufWriter, Read, Write};
 
 #[cfg(unix)]
-use std::{ffi::OsStr, os::unix::net::UnixStream};
+use std::{
+    ffi::OsStr,
+    fs::File,
+    net::{TcpStream, ToSocketAddrs},
+    os::unix::net::UnixStream,
+    path::Path,
+};
 
 #[derive(Debug, Clone)]
 pub enum Command {
@@ -21,6 +27,12 @@ pub enum Command {
     SetRendering(bool),
 }
 
+impl Default for Command {
+    fn default() -> Self {
+        StepFrame
+    }
+}
+
 use Command::*;
 
 #[repr(u8)]
@@ -30,10 +42,11 @@ pub enum RenderStyle {
     Rgb = 1,
 }
 
-impl Savable for Command {
+impl Savable for Option<Command> {
     fn save(&self, fh: &mut dyn Write) {
-        debug!("Sending command: {:?}", self);
-        match self.clone() {
+        trace!("Sending command: {:?}", self);
+        let mut fh = &mut BufWriter::new(fh);
+        match self.clone().expect("Empty command received") {
             LoadRom(record_tas, filename) => {
                 write_byte(fh, 1);
                 write_byte(fh, if record_tas { 1 } else { 0 });
@@ -81,11 +94,12 @@ impl Savable for Command {
                 write_byte(fh, 12);
                 write_value(fh, is_rendering);
             }
-        }
+        };
+        fh.flush().expect("Unable to flush buffer");
     }
     fn load(&mut self, fh: &mut dyn Read) {
         let command = read_byte(fh);
-        *self = match command {
+        *self = Some(match command {
             1 => {
                 let record_tas = read_value::<bool>(fh);
                 let filename = read_value::<String>(fh);
@@ -106,8 +120,20 @@ impl Savable for Command {
             10 => Peek(read_value::<u16>(fh)),
             11 => Poke(read_value::<u16>(fh), read_value::<u8>(fh)),
             12 => SetRendering(read_value::<bool>(fh)),
-            x => panic!("Received command {}. Probably a sync error", x),
-        };
+            x => {
+                error!("Received command {}. Probably a sync error", x);
+                *self = None;
+                return;
+            }
+        })
+    }
+}
+impl Savable for Command {
+    fn save(&self, fh: &mut dyn Write) {
+        Some(self.clone()).save(fh)
+    }
+    fn load(&mut self, fh: &mut dyn Read) {
+        *self = read_value::<Option<Command>>(fh).expect("Unable to read command");
     }
 }
 
@@ -135,8 +161,11 @@ fn read_value<T: Savable + Default>(r: &mut dyn Read) -> T {
     t
 }
 
-pub struct SocketHeadlessClient(UnixStream);
+pub struct SocketHeadlessClient(Box<dyn ReadWrite>);
 impl SocketHeadlessClient {
+    pub fn new<T: ReadWrite + 'static>(t: T) -> Self {
+        SocketHeadlessClient(Box::new(t))
+    }
     pub fn load_rom(&mut self, save_tas: bool, filename: String) {
         LoadRom(save_tas, filename).save(&mut self.0);
         self.sync();
@@ -183,6 +212,7 @@ impl SocketHeadlessClient {
         Peek(address).save(&mut self.0);
         let x = read_value::<u8>(&mut self.0);
         self.sync();
+        debug!("Peek({})={}", address, x);
         x
     }
     pub fn poke(&mut self, address: u16, value: u8) {
@@ -194,16 +224,44 @@ impl SocketHeadlessClient {
         self.sync();
     }
     fn sync(&mut self) {
-        debug!("sync={}", read_value::<u8>(&mut self.0));
+        let byte = read_value::<u8>(&mut self.0);
+        trace!("sync={}", byte);
     }
 }
 
-#[cfg(unix)]
 #[allow(dead_code)]
-pub fn connect_socket<P: AsRef<OsStr>>(filename: P) -> SocketHeadlessClient {
-    let stream = UnixStream::connect(filename.as_ref()).expect(&*format!(
-        "Unable to connect to unix domain socket at {:?}",
-        filename.as_ref()
+pub fn connect_tcp(host: &str) -> SocketHeadlessClient {
+    let stream = TcpStream::connect(host).expect(&*format!(
+        "Unable to connect to {:?}",
+        host.to_socket_addrs()
     ));
-    SocketHeadlessClient(stream)
+    SocketHeadlessClient::new(stream)
 }
+
+pub fn connect_socket<P: AsRef<Path>>(p: P) -> SocketHeadlessClient {
+    let stream = UnixStream::connect(p.as_ref()).expect(&*format!(
+        "Unable to connect to domain socket at {:?}",
+        p.as_ref()
+    ));
+    SocketHeadlessClient::new(stream)
+}
+
+pub trait ReadWrite: Read + Write + Send + Sync {}
+pub struct StdInOut(pub File, pub File);
+impl Read for StdInOut {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.0.read(buf)
+    }
+}
+impl Write for StdInOut {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.1.write(buf)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.1.flush()
+    }
+}
+
+impl ReadWrite for StdInOut {}
+impl ReadWrite for TcpStream {}
+impl ReadWrite for UnixStream {}
