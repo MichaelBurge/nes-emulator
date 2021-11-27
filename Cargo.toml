@@ -8,19 +8,23 @@ edition = "2018"
 name = "nes-emulator"
 path = "src/main.rs"
 
+[[bin]]
+name = "headless"
+path = "examples/headless.rs"
+
 [[bench]]
 name = "emulator"
 harness = false
 
 [dev-dependencies]
 criterion = "0.3"
-clap = "3.0.0-beta.1"
-env_logger = "0.7"
 
 [dependencies]
 sdl2 = "0.32"
 log = "0.4.11"
 tokio = {version = "0.2", features = ["uds"]}
+clap = "3.0.0-beta.5"
+env_logger = "0.7"
 
 [profile.release]
 opt-level = 3

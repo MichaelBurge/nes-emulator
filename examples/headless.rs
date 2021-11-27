@@ -1,6 +1,6 @@
 #![cfg(unix)]
 
-use clap::Clap;
+use clap::{Parser, ValueHint};
 use core::ptr::null_mut;
 use log::{debug, info, trace};
 use nes_emulator::{
@@ -25,7 +25,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[derive(Clap)]
+#[derive(Parser)]
+#[clap(name = "headless")]
 struct Opts {
     #[clap(long = "host")]
     host: Option<String>,
