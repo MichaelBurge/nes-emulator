@@ -2,13 +2,13 @@
 #![allow(non_upper_case_globals)]
 #![allow(dead_code)]
 #![allow(unused_variables)]
-
 use crate::common::{get_bit, run_clocks, Clocked};
 use crate::mapper::AddressSpace;
 use crate::mapper::LoggedAddressSpace;
 use crate::mapper::NullAddressSpace;
 use crate::serialization::file_position;
 use crate::serialization::Savable;
+use std::fmt::Debug;
 
 use std::io;
 use std::io::Read;
@@ -42,6 +42,28 @@ pub struct C6502 {
     debugger: C6502Debugger,
     pub is_tracing: bool,
     clocks_to_pause: u16,
+}
+
+impl Debug for C6502 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("C6502")
+            .field("acc", &self.acc)
+            .field("x", &self.x)
+            .field("y", &self.y)
+            .field("pc", &self.pc)
+            .field("sp", &self.sp)
+            .field("carry", &self.carry)
+            .field("zero", &self.zero)
+            .field("interruptd", &self.interruptd)
+            .field("decimal", &self.decimal)
+            .field("overflow", &self.overflow)
+            .field("negative", &self.negative)
+            .field("counter", &self.counter)
+            .field("clocks", &self.clocks)
+            .field("is_tracing", &self.is_tracing)
+            .field("clocks_to_pause", &self.clocks_to_pause)
+            .finish()
+    }
 }
 
 impl Savable for C6502 {
@@ -288,18 +310,19 @@ const aby: AddressingMode = AbsoluteY;
 const ind: AddressingMode = Indirect;
 
 // Opcode table: http://www.oxyron.de/html/opcodes02.html
-const OPCODE_TABLE: [(Operation, AddressingMode, CycleCount, CycleCount);256] =
+const OPCODE_TABLE: [(Operation, AddressingMode, CycleCount, CycleCount); 256] =
     // TODO Audit each record to see that it was input correctly
     // (Operation, addressing mode, clock cycles, extra clock cycles if page boundary crossed)
-    [   // 0x
+    [
+        // 0x
         (BRK, imp, 7, 0), // x0
         (ORA, izx, 6, 0), // x1
         (KIL, imp, 0, 0), // x2
         (SLO, izx, 8, 0), // x3
-        (NOP, zp,  3, 0), // x4
-        (ORA, zp,  3, 0), // x5
-        (ASL, zp,  5, 0), // x6
-        (SLO, zp,  5, 0), // x7
+        (NOP, zp, 3, 0),  // x4
+        (ORA, zp, 3, 0),  // x5
+        (ASL, zp, 5, 0),  // x6
+        (SLO, zp, 5, 0),  // x7
         (PHP, imp, 3, 0), // x8
         (ORA, imm, 2, 0), // x9
         (ASL, acc, 2, 0), // xA
@@ -330,10 +353,10 @@ const OPCODE_TABLE: [(Operation, AddressingMode, CycleCount, CycleCount);256] =
         (AND, izx, 6, 0), // x1
         (KIL, imp, 0, 0), // x2
         (RLA, izx, 8, 0), // x3
-        (BIT, zp,  3, 0), // x4
-        (AND, zp,  3, 0), // x5
-        (ROL, zp,  5, 0), // x6
-        (RLA, zp,  5, 0), // x7
+        (BIT, zp, 3, 0),  // x4
+        (AND, zp, 3, 0),  // x5
+        (ROL, zp, 5, 0),  // x6
+        (RLA, zp, 5, 0),  // x7
         (PLP, imp, 4, 0), // x8
         (AND, imm, 2, 0), // x9
         (ROL, acc, 2, 0), // xA
@@ -364,10 +387,10 @@ const OPCODE_TABLE: [(Operation, AddressingMode, CycleCount, CycleCount);256] =
         (EOR, izx, 6, 0), // x1
         (KIL, imp, 0, 0), // x2
         (SRE, izx, 8, 0), // x3
-        (NOP, zp,  3, 0), // x4
-        (EOR, zp,  3, 0), // x5
-        (LSR, zp,  5, 0), // x6
-        (SRE, zp,  5, 0), // x7
+        (NOP, zp, 3, 0),  // x4
+        (EOR, zp, 3, 0),  // x5
+        (LSR, zp, 5, 0),  // x6
+        (SRE, zp, 5, 0),  // x7
         (PHA, imp, 3, 0), // x8
         (EOR, imm, 2, 0), // x9
         (LSR, imp, 2, 0), // xA
@@ -398,10 +421,10 @@ const OPCODE_TABLE: [(Operation, AddressingMode, CycleCount, CycleCount);256] =
         (ADC, izx, 6, 0), // x1
         (KIL, imp, 0, 0), // x2
         (RRA, izx, 8, 0), // x3
-        (NOP, zp,  3, 0), // x4
-        (ADC, zp,  3, 0), // x5
-        (ROR, zp,  5, 0), // x6
-        (RRA, zp,  5, 0), // x7
+        (NOP, zp, 3, 0),  // x4
+        (ADC, zp, 3, 0),  // x5
+        (ROR, zp, 5, 0),  // x6
+        (RRA, zp, 5, 0),  // x7
         (PLA, imp, 4, 0), // x8
         (ADC, imm, 2, 0), // x9
         (ROR, imp, 2, 0), // xA
@@ -432,10 +455,10 @@ const OPCODE_TABLE: [(Operation, AddressingMode, CycleCount, CycleCount);256] =
         (STA, izx, 6, 0), // x1
         (NOP, imm, 2, 0), // x2
         (SAX, izx, 6, 0), // x3
-        (STY, zp,  3, 0), // x4
-        (STA, zp,  3, 0), // x5
-        (STX, zp,  3, 0), // x6
-        (SAX, zp,  3, 0), // x7
+        (STY, zp, 3, 0),  // x4
+        (STA, zp, 3, 0),  // x5
+        (STX, zp, 3, 0),  // x6
+        (SAX, zp, 3, 0),  // x7
         (DEY, imp, 2, 0), // x8
         (NOP, imm, 2, 0), // x9
         (TXA, imp, 2, 0), // xA
@@ -466,10 +489,10 @@ const OPCODE_TABLE: [(Operation, AddressingMode, CycleCount, CycleCount);256] =
         (LDA, izx, 6, 0), // x1
         (LDX, imm, 2, 0), // x2
         (LAX, izx, 6, 0), // x3
-        (LDY, zp,  3, 0), // x4
-        (LDA, zp,  3, 0), // x5
-        (LDX, zp,  3, 0), // x6
-        (LAX, zp,  3, 0), // x7
+        (LDY, zp, 3, 0),  // x4
+        (LDA, zp, 3, 0),  // x5
+        (LDX, zp, 3, 0),  // x6
+        (LAX, zp, 3, 0),  // x7
         (TAY, imp, 2, 0), // x8
         (LDA, imm, 2, 0), // x9
         (TAX, imp, 2, 0), // xA
@@ -500,10 +523,10 @@ const OPCODE_TABLE: [(Operation, AddressingMode, CycleCount, CycleCount);256] =
         (CMP, izx, 6, 0), // x1
         (NOP, imm, 2, 0), // x2
         (DCP, izx, 8, 0), // x3
-        (CPY, zp,  3, 0), // x4
-        (CMP, zp,  3, 0), // x5
-        (DEC, zp,  5, 0), // x6
-        (DCP, zp,  5, 0), // x7
+        (CPY, zp, 3, 0),  // x4
+        (CMP, zp, 3, 0),  // x5
+        (DEC, zp, 5, 0),  // x6
+        (DCP, zp, 5, 0),  // x7
         (INY, imp, 2, 0), // x8
         (CMP, imm, 2, 0), // x9
         (DEX, imp, 2, 0), // xA
@@ -534,10 +557,10 @@ const OPCODE_TABLE: [(Operation, AddressingMode, CycleCount, CycleCount);256] =
         (SBC, izx, 6, 0), // x1
         (NOP, imm, 2, 0), // x2
         (ISC, izx, 8, 0), // x3
-        (CPX, zp,  3, 0), // x4
-        (SBC, zp,  3, 0), // x5
-        (INC, zp,  5, 0), // x6
-        (ISC, zp,  5, 0), // x7
+        (CPX, zp, 3, 0),  // x4
+        (SBC, zp, 3, 0),  // x5
+        (INC, zp, 5, 0),  // x6
+        (ISC, zp, 5, 0),  // x7
         (INX, imp, 2, 0), // x8
         (SBC, imm, 2, 0), // x9
         (NOP, imp, 2, 0), // xA
@@ -563,7 +586,7 @@ const OPCODE_TABLE: [(Operation, AddressingMode, CycleCount, CycleCount);256] =
         (SBC, abx, 4, 1), // xD
         (INC, abx, 7, 0), // xE
         (ISC, abx, 7, 0), // xF
-        ];
+    ];
 
 type WriteTarget = Option<u16>;
 
@@ -1470,7 +1493,9 @@ mod tests {
         ];
         let mut c = create_test_cpu(&program);
         c.set_status_register_from_byte(0x6E);
+        println!("{:?}", c);
         c.run_instructions(2);
+        println!("{:?}", c);
         assert_eq!(c.status_register_byte(true), 0x2c);
     }
     #[test]
