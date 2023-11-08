@@ -1,9 +1,10 @@
 [package]
+build = "build.rs"
+
 name = "nes-emulator"
 version = "0.1.0"
 authors = ["Michael Burge <michaelburge@pobox.com>"]
 edition = "2018"
-
 [[bin]]
 name = "nes-emulator"
 path = "src/main.rs"
@@ -20,11 +21,14 @@ harness = false
 criterion = "0.3"
 
 [dependencies]
-sdl2 = "0.32"
 log = "0.4.11"
-tokio = {version = "0.2", features = ["uds"]}
+tokio = { version = "0.2", features = ["uds"] }
 clap = "3.0.0-beta.5"
 env_logger = "0.7"
+
+[dependencies.sdl2]
+version = "0.32"
+features = ["use_mac_framework"]
 
 [profile.release]
 opt-level = 3
